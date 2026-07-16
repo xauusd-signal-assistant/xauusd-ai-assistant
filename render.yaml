@@ -30,13 +30,13 @@ services:
       - key: TIMEZONE
         value: Europe/London
       - key: SESSION_START
-        value: "12:30"
+        value: "5:00"
       - key: SESSION_END
-        value: "16:30"
+        value: "23:00"
       - key: HARD_BLACKOUT_START
-        value: "13:30"
+        value: "00:00"
       - key: HARD_BLACKOUT_END
-        value: "13:50"
+        value: "00:00"
       - key: DEMO_BALANCE_GBP
         value: "4500"
       - key: LIVE_BALANCE_GBP
