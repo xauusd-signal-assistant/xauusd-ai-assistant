@@ -4,6 +4,7 @@ from .config import settings
 def send_telegram(decision):
     if not settings.telegram_bot_token or not settings.telegram_chat_id: return False
     if decision.action == "WAIT" and not settings.notify_wait_signals: return False
+    if decision.action != "WAIT" and decision.confidence < 90: return False
     if decision.action == "WAIT":
         text = f"🟡 <b>WAIT</b>\n\n{html.escape(decision.reason)}\nNo trade."
     else:
