@@ -1,0 +1,66 @@
+XAUUSD AI ASSISTANT — FINAL VERSION
+
+ALERT FORMAT
+
+🟢 BUY XAUUSD / 🔴 SELL XAUUSD
+Chart: 1 Minute or 5 Minute
+Entry / SL / TP
+Demo lot / Live lot
+Confidence
+One short reason
+
+or:
+
+🟡 WAIT
+One short reason
+No trade.
+
+YOUR UK TIMES
+
+Signals allowed: 12:30–16:30
+Forced WAIT: 13:30–13:50
+Extra WAIT: 20 minutes before/after detected high-impact US events
+
+IMPORTANT LOT-SIZE NOTE
+
+The bot shows both demo and live lot estimates, so moving to your live account
+will not require changing code. However, the estimate depends on your broker's
+XAUUSD contract size, minimum lot, lot step and GBP/USD conversion. Confirm
+those values against MT5 Symbol Specification before trusting the number.
+
+WHAT TO DO NOW
+
+1. Replace the files currently in your PRIVATE GitHub repository with all files
+   from this extracted final folder.
+2. In Render, redeploy the Blueprint from that repository.
+3. Enter these secret values when Render asks:
+   WEBHOOK_SECRET
+   TELEGRAM_BOT_TOKEN
+   TELEGRAM_CHAT_ID
+   OPENAI_API_KEY
+   FINNHUB_API_KEY (optional initially)
+   NEWSAPI_KEY (optional initially)
+4. Open your Render health address:
+   https://YOUR-RENDER-NAME.onrender.com/health
+5. It should show openai=true and telegram=true.
+
+TRADINGVIEW
+
+1. Open XAUUSD on the 5-minute chart.
+2. Open pine/xauusd_ai_assistant_final.pine from this project.
+3. Copy all of it into TradingView Pine Editor.
+4. Add it to the chart.
+5. In indicator settings, paste the same WEBHOOK_SECRET used in Render.
+6. Create an alert using “Any alert() function call”.
+7. Webhook URL:
+   https://YOUR-RENDER-NAME.onrender.com/webhook/tradingview
+
+OPENAI
+
+API billing is separate from ChatGPT. Put the secret API key only into Render's
+OPENAI_API_KEY field. Never put it in TradingView, GitHub or screenshots.
+
+SAFETY
+
+This is a selective decision-support tool, not a guarantee of profit or signal
+accuracy. Keep MT5 execution manual and forward-test it on demo before live use.

@@ -1,0 +1,69 @@
+services:
+  - type: web
+    name: xauusd-ai-assistant
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: WEBHOOK_SECRET
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: FINNHUB_API_KEY
+        sync: false
+      - key: NEWSAPI_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-5-mini
+      - key: ENABLE_OPENAI
+        value: "true"
+      - key: NOTIFY_WAIT_SIGNALS
+        value: "true"
+      - key: TIMEZONE
+        value: Europe/London
+      - key: SESSION_START
+        value: "12:30"
+      - key: SESSION_END
+        value: "16:30"
+      - key: HARD_BLACKOUT_START
+        value: "13:30"
+      - key: HARD_BLACKOUT_END
+        value: "13:50"
+      - key: DEMO_BALANCE_GBP
+        value: "4500"
+      - key: LIVE_BALANCE_GBP
+        value: "2000"
+      - key: DEMO_RISK_PERCENT
+        value: "0.25"
+      - key: LIVE_RISK_PERCENT
+        value: "0.25"
+      - key: MAX_DAILY_LOSS_PERCENT
+        value: "1.5"
+      - key: MIN_RISK_REWARD
+        value: "2.0"
+      - key: XAUUSD_CONTRACT_SIZE
+        value: "100"
+      - key: XAUUSD_MIN_LOT
+        value: "0.01"
+      - key: XAUUSD_LOT_STEP
+        value: "0.01"
+      - key: XAUUSD_MAX_LOT
+        value: "0.50"
+      - key: GBPUSD_RATE
+        value: "1.27"
+      - key: EVENT_BLACKOUT_MINUTES_BEFORE
+        value: "20"
+      - key: EVENT_BLACKOUT_MINUTES_AFTER
+        value: "20"
+      - key: NEWS_LOOKBACK_HOURS
+        value: "12"
+      - key: DATABASE_PATH
+        value: /tmp/signals.db

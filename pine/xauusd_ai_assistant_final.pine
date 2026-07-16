@@ -1,0 +1,56 @@
+//@version=6
+indicator("XAUUSD AI Assistant Final", overlay=true)
+secret = input.string("change-me", "Webhook secret")
+fastLen = input.int(20, "EMA 20", minval=2)
+slowLen = input.int(50, "EMA 50", minval=3)
+rsiLen = input.int(14, "RSI", minval=2)
+atrLen = input.int(14, "ATR", minval=2)
+adxLen = input.int(14, "ADX", minval=2)
+cooldown = input.int(4, "Cooldown bars", minval=1)
+ema20 = ta.ema(close, fastLen)
+ema50 = ta.ema(close, slowLen)
+rsi = ta.rsi(close, rsiLen)
+atr = ta.atr(atrLen)
+[plusDI, minusDI, adx] = ta.dmi(adxLen, adxLen)
+trend(tf) =>
+    c = request.security(syminfo.tickerid, tf, close)
+    f = request.security(syminfo.tickerid, tf, ta.ema(close, fastLen))
+    s = request.security(syminfo.tickerid, tf, ta.ema(close, slowLen))
+    c > f and f > s ? "bullish" : c < f and f < s ? "bearish" : "neutral"
+trend1m = trend("1")
+trend5m = trend("5")
+trend15m = trend("15")
+trend1h = trend("60")
+trend4h = trend("240")
+longCandidate = barstate.isconfirmed and ta.crossover(close, ema20) and ema20 > ema50 and rsi > 52 and adx >= 20
+shortCandidate = barstate.isconfirmed and ta.crossunder(close, ema20) and ema20 < ema50 and rsi < 48 and adx >= 20
+var int lastAlertBar = na
+canAlert = na(lastAlertBar) or bar_index - lastAlertBar >= cooldown
+setup = longCandidate ? "long" : shortCandidate ? "short" : "none"
+makeJson(_setup) =>
+    id = syminfo.tickerid + "-" + timeframe.period + "-" + str.tostring(time)
+    '{"secret":"' + secret +
+     '","alert_id":"' + id +
+     '","symbol":"' + syminfo.tickerid +
+     '","timeframe":"' + timeframe.period +
+     '","timestamp":' + str.tostring(time_close / 1000) +
+     ',"price":' + str.tostring(close) +
+     ',"ema20":' + str.tostring(ema20) +
+     ',"ema50":' + str.tostring(ema50) +
+     ',"rsi":' + str.tostring(rsi) +
+     ',"atr":' + str.tostring(atr) +
+     ',"adx":' + str.tostring(adx) +
+     ',"trend_1m":"' + trend1m +
+     '","trend_5m":"' + trend5m +
+     '","trend_15m":"' + trend15m +
+     '","trend_1h":"' + trend1h +
+     '","trend_4h":"' + trend4h +
+     '","setup":"' + _setup +
+     '","daily_pnl":0,"open_positions":0}'
+if canAlert and setup != "none"
+    alert(makeJson(setup), alert.freq_once_per_bar_close)
+    lastAlertBar := bar_index
+plot(ema20, "EMA 20")
+plot(ema50, "EMA 50")
+plotshape(longCandidate, "Long candidate", shape.triangleup, location.belowbar, size=size.tiny)
+plotshape(shortCandidate, "Short candidate", shape.triangledown, location.abovebar, size=size.tiny)
