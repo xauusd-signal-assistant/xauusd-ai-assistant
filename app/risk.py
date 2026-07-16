@@ -28,7 +28,7 @@ def rules_decision(alert: TradingViewAlert):
     if alert.trend_1m == direction and alert.trend_5m == direction and alert.adx >= 25:
         chart, mult, reason, confidence = "1 Minute", 1.15, "Precision entry; trends aligned", 91
     else:
-        chart, mult, reason, confidence = "5 Minute", 1.35, "Strong multi-timeframe trend", 88
+        chart, mult, reason, confidence = "5 Minute", 1.35, "Strong multi-timeframe trend", 90
 
     stop_distance = alert.atr * mult
     target_distance = stop_distance * settings.min_risk_reward
