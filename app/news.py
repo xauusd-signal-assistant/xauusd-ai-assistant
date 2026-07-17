@@ -40,46 +40,73 @@ def fetch_context(alert_timestamp: int) -> NewsContext:
     blocked = False
     reason = None
 
-    if settings.finnhub_api_key:
+        if settings.fmp_api_key:
         try:
             start = (now - timedelta(days=1)).date().isoformat()
             end = (now + timedelta(days=1)).date().isoformat()
+
             response = httpx.get(
-                "https://finnhub.io/api/v1/calendar/economic",
-                params={"from": start, "to": end, "token": settings.finnhub_api_key},
+                "https://financialmodelingprep.com/stable/economic-calendar",
+                params={
+                    "from": start,
+                    "to": end,
+                    "apikey": settings.fmp_api_key,
+                },
                 timeout=8,
             )
             response.raise_for_status()
-            raw = response.json().get("economicCalendar", [])
+            raw = response.json()
+
             for item in raw:
                 country = str(item.get("country", "")).upper()
+                currency = str(item.get("currency", "")).upper()
                 impact = str(item.get("impact", "")).lower()
-                event_dt = _parse_dt(str(item.get("time", "")))
-                if country not in {"US", "USA", "UNITED STATES"}:
+                event_time = item.get("date") or item.get("time")
+                event_dt = _parse_dt(str(event_time or ""))
+
+                if country not in {"US", "USA", "UNITED STATES"} and currency != "USD":
                     continue
+
                 if impact not in {"high", "3"}:
                     continue
+
                 event = {
                     "event": item.get("event"),
-                    "time": item.get("time"),
+                    "time": event_time,
                     "impact": item.get("impact"),
                     "actual": item.get("actual"),
                     "estimate": item.get("estimate"),
-                    "previous": item.get("prev"),
+                    "previous": item.get("previous"),
                 }
                 events.append(event)
+
                 if event_dt:
-                    delta_minutes = (now - event_dt.astimezone(timezone.utc)).total_seconds() / 60
-                    if -settings.event_blackout_minutes_before <= delta_minutes <= settings.event_blackout_minutes_after:
+                    if event_dt.tzinfo is None:
+                        event_dt = event_dt.replace(tzinfo=timezone.utc)
+
+                    delta_minutes = (
+                        now - event_dt.astimezone(timezone.utc)
+                    ).total_seconds() / 60
+
+                    if (
+                        -settings.event_blackout_minutes_before
+                        <= delta_minutes
+                        <= settings.event_blackout_minutes_after
+                    ):
                         blocked = True
                         reason = (
-                            f"High-impact US event near signal time: {item.get('event')} "
-                            f"({item.get('time')})"
+                            f"High-impact US event near signal time: "
+                            f"{item.get('event')} ({event_time})"
                         )
+
         except Exception as exc:
-            warnings.append(f"Economic calendar unavailable: {type(exc).__name__}")
+            warnings.append(
+                f"Economic calendar unavailable: {type(exc).__name__}"
+            )
     else:
-        warnings.append("FINNHUB_API_KEY not configured; economic-calendar protection is incomplete")
+        warnings.append(
+            "FMP_API_KEY not configured; economic-calendar protection is incomplete"
+        )
 
     if settings.newsapi_key:
         try:
