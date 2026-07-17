@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
 
 from .ai import review
+from .auto_scanner import start_auto_scanner, stop_auto_scanner
 from .config import settings
 from .db import (
     alert_exists,
@@ -31,12 +32,18 @@ from .scanner import run_scanner_once
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
-    yield
+
+    scanner_task = start_auto_scanner()
+
+    try:
+        yield
+    finally:
+        await stop_auto_scanner(scanner_task)
 
 
 app = FastAPI(
     title="XAUUSD AI Assistant",
-    version="1.4.0",
+    version="1.5.0",
     lifespan=lifespan,
 )
 
@@ -59,7 +66,8 @@ def health():
             settings.oanda_api_token
             and settings.oanda_account_id
         ),
-        "scanner_automatic": False,
+        "scanner_automatic": True,
+        "scanner_interval_seconds": 60,
         "signal_window_uk": (
             f"{settings.session_start}-"
             f"{settings.session_end}"
@@ -184,7 +192,7 @@ def health_oanda_live_signal():
 @app.get("/health/oanda/scanner/run")
 def run_scanner_test():
     """
-    Run one complete scanner cycle.
+    Run one manual scanner cycle.
 
     A valid BUY or SELL can be sent to Telegram.
     WAIT decisions are not sent.
