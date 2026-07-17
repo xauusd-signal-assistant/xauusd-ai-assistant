@@ -12,48 +12,36 @@ TIMEFRAMES = {
     "4h": "H4",
 }
 
-TIMEFRAME_WEIGHTS = {
-    "1m": 1,
-    "5m": 2,
-    "15m": 3,
-    "30m": 3,
-    "1h": 4,
-    "4h": 4,
-}
+
+BULLISH = "bullish"
+BEARISH = "bearish"
+NEUTRAL = "neutral"
 
 
 def _round_price(value: float) -> float:
-    return round(value, 3)
+    return round(float(value), 3)
 
 
-def _ema_series(
-    values: list[float],
-    period: int,
-) -> list[float]:
+def _ema_series(values: list[float], period: int) -> list[float]:
     if not values:
         raise ValueError("EMA requires price values")
 
     multiplier = 2.0 / (period + 1.0)
-    ema_values = [values[0]]
+    results = [values[0]]
 
     for value in values[1:]:
-        previous = ema_values[-1]
-        current = (
+        results.append(
             value * multiplier
-            + previous * (1.0 - multiplier)
+            + results[-1] * (1.0 - multiplier)
         )
-        ema_values.append(current)
 
-    return ema_values
+    return results
 
 
-def _rma(
-    values: list[float],
-    period: int,
-) -> float:
+def _wilder_average(values: list[float], period: int) -> float:
     if len(values) < period:
         raise ValueError(
-            f"RMA requires at least {period} values"
+            f"Wilder average requires at least {period} values"
         )
 
     average = sum(values[:period]) / period
@@ -67,13 +55,10 @@ def _rma(
     return average
 
 
-def _rma_series(
-    values: list[float],
-    period: int,
-) -> list[float]:
+def _wilder_series(values: list[float], period: int) -> list[float]:
     if len(values) < period:
         raise ValueError(
-            f"RMA requires at least {period} values"
+            f"Wilder series requires at least {period} values"
         )
 
     average = sum(values[:period]) / period
@@ -89,10 +74,7 @@ def _rma_series(
     return results
 
 
-def _rsi(
-    closes: list[float],
-    period: int = 14,
-) -> float:
+def _rsi(closes: list[float], period: int = 14) -> float:
     if len(closes) <= period:
         raise ValueError(
             f"RSI requires more than {period} closes"
@@ -103,7 +85,6 @@ def _rsi(
 
     for index in range(1, len(closes)):
         change = closes[index] - closes[index - 1]
-
         gains.append(max(change, 0.0))
         losses.append(max(-change, 0.0))
 
@@ -115,7 +96,6 @@ def _rsi(
             average_gain * (period - 1)
             + gains[index]
         ) / period
-
         average_loss = (
             average_loss * (period - 1)
             + losses[index]
@@ -125,15 +105,10 @@ def _rsi(
         return 100.0
 
     relative_strength = average_gain / average_loss
-
-    return 100.0 - (
-        100.0 / (1.0 + relative_strength)
-    )
+    return 100.0 - (100.0 / (1.0 + relative_strength))
 
 
-def _true_ranges(
-    candles: list[dict[str, Any]],
-) -> list[float]:
+def _true_ranges(candles: list[dict[str, Any]]) -> list[float]:
     ranges: list[float] = []
 
     for index in range(1, len(candles)):
@@ -159,7 +134,7 @@ def _atr(
     candles: list[dict[str, Any]],
     period: int = 14,
 ) -> float:
-    return _rma(
+    return _wilder_average(
         _true_ranges(candles),
         period,
     )
@@ -170,9 +145,7 @@ def _adx_metrics(
     period: int = 14,
 ) -> dict[str, float]:
     if len(candles) < period * 2 + 2:
-        raise ValueError(
-            "ADX requires more candle history"
-        )
+        raise ValueError("ADX requires more candle history")
 
     true_ranges: list[float] = []
     plus_dm: list[float] = []
@@ -201,34 +174,18 @@ def _adx_metrics(
 
         plus_dm.append(
             upward_move
-            if (
-                upward_move > downward_move
-                and upward_move > 0
-            )
+            if upward_move > downward_move and upward_move > 0
             else 0.0
         )
-
         minus_dm.append(
             downward_move
-            if (
-                downward_move > upward_move
-                and downward_move > 0
-            )
+            if downward_move > upward_move and downward_move > 0
             else 0.0
         )
 
-    smoothed_tr = _rma_series(
-        true_ranges,
-        period,
-    )
-    smoothed_plus = _rma_series(
-        plus_dm,
-        period,
-    )
-    smoothed_minus = _rma_series(
-        minus_dm,
-        period,
-    )
+    smoothed_tr = _wilder_series(true_ranges, period)
+    smoothed_plus = _wilder_series(plus_dm, period)
+    smoothed_minus = _wilder_series(minus_dm, period)
 
     dx_values: list[float] = []
     current_plus_di = 0.0
@@ -243,27 +200,14 @@ def _adx_metrics(
             plus_di = 0.0
             minus_di = 0.0
         else:
-            plus_di = (
-                100.0
-                * plus_value
-                / smoothed_range
-            )
-            minus_di = (
-                100.0
-                * minus_value
-                / smoothed_range
-            )
+            plus_di = 100.0 * plus_value / smoothed_range
+            minus_di = 100.0 * minus_value / smoothed_range
 
         denominator = plus_di + minus_di
-
         dx = (
             0.0
             if denominator == 0
-            else (
-                100.0
-                * abs(plus_di - minus_di)
-                / denominator
-            )
+            else 100.0 * abs(plus_di - minus_di) / denominator
         )
 
         dx_values.append(dx)
@@ -271,7 +215,7 @@ def _adx_metrics(
         current_minus_di = minus_di
 
     adx = (
-        _rma(dx_values, period)
+        _wilder_average(dx_values, period)
         if len(dx_values) >= period
         else sum(dx_values) / len(dx_values)
     )
@@ -287,7 +231,7 @@ def _market_structure(
     candles: list[dict[str, Any]],
 ) -> str:
     if len(candles) < 24:
-        return "neutral"
+        return NEUTRAL
 
     previous_section = candles[-24:-12]
     recent_section = candles[-12:]
@@ -300,7 +244,6 @@ def _market_structure(
         float(candle["low"])
         for candle in previous_section
     )
-
     recent_high = max(
         float(candle["high"])
         for candle in recent_section
@@ -310,28 +253,50 @@ def _market_structure(
         for candle in recent_section
     )
 
-    if (
-        recent_high > previous_high
-        and recent_low > previous_low
-    ):
-        return "bullish"
+    if recent_high > previous_high and recent_low > previous_low:
+        return BULLISH
 
-    if (
-        recent_high < previous_high
-        and recent_low < previous_low
-    ):
-        return "bearish"
+    if recent_high < previous_high and recent_low < previous_low:
+        return BEARISH
 
     return "ranging"
+
+
+def _candle_rejection(candle: dict[str, Any]) -> str:
+    open_price = float(candle["open"])
+    high = float(candle["high"])
+    low = float(candle["low"])
+    close = float(candle["close"])
+
+    candle_range = max(high - low, 1e-9)
+    body = max(abs(close - open_price), candle_range * 0.05)
+    upper_wick = high - max(open_price, close)
+    lower_wick = min(open_price, close) - low
+
+    if (
+        close > open_price
+        and lower_wick >= body * 1.15
+        and close >= low + candle_range * 0.62
+    ):
+        return BULLISH
+
+    if (
+        close < open_price
+        and upper_wick >= body * 1.15
+        and close <= low + candle_range * 0.38
+    ):
+        return BEARISH
+
+    return "none"
 
 
 def _timeframe_analysis(
     label: str,
     candles: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    if len(candles) < 60:
+    if len(candles) < 80:
         raise ValueError(
-            f"{label} requires at least 60 candles"
+            f"{label} requires at least 80 completed candles"
         )
 
     closes = [
@@ -344,7 +309,6 @@ def _timeframe_analysis(
 
     close = closes[-1]
     previous_close = closes[-2]
-
     ema20 = ema20_series[-1]
     previous_ema20 = ema20_series[-2]
     ema50 = ema50_series[-1]
@@ -354,22 +318,23 @@ def _timeframe_analysis(
     directional = _adx_metrics(candles)
     structure = _market_structure(candles)
 
+    ema20_slope = ema20 - previous_ema20
+
     bullish_trend = (
         close > ema20 > ema50
-        and ema20 >= previous_ema20
+        and ema20_slope >= 0
     )
-
     bearish_trend = (
         close < ema20 < ema50
-        and ema20 <= previous_ema20
+        and ema20_slope <= 0
     )
 
     if bullish_trend:
-        trend = "bullish"
+        trend = BULLISH
     elif bearish_trend:
-        trend = "bearish"
+        trend = BEARISH
     else:
-        trend = "neutral"
+        trend = NEUTRAL
 
     previous_high = max(
         float(candle["high"])
@@ -381,434 +346,665 @@ def _timeframe_analysis(
     )
 
     breakout = (
-        "bullish"
+        BULLISH
         if close > previous_high
-        else "bearish"
+        else BEARISH
         if close < previous_low
         else "none"
     )
 
+    latest = candles[-1]
+    latest_low = float(latest["low"])
+    latest_high = float(latest["high"])
+
     pullback = (
-        "bullish"
+        BULLISH
         if (
-            trend == "bullish"
-            and float(candles[-1]["low"])
-            <= ema20 + atr * 0.15
-            and close > ema20
+            trend == BULLISH
+            and latest_low <= ema20 + atr * 0.25
+            and close >= ema20
         )
-        else "bearish"
+        else BEARISH
         if (
-            trend == "bearish"
-            and float(candles[-1]["high"])
-            >= ema20 - atr * 0.15
-            and close < ema20
+            trend == BEARISH
+            and latest_high >= ema20 - atr * 0.25
+            and close <= ema20
         )
         else "none"
     )
 
+    momentum = (
+        BULLISH
+        if (
+            close > previous_close
+            and ema20_slope > 0
+            and rsi >= 50
+        )
+        else BEARISH
+        if (
+            close < previous_close
+            and ema20_slope < 0
+            and rsi <= 50
+        )
+        else NEUTRAL
+    )
+
+    if directional["adx"] >= 20 and trend != NEUTRAL:
+        regime = "trending"
+    elif directional["adx"] <= 18 or structure == "ranging":
+        regime = "ranging"
+    else:
+        regime = "transitional"
+
+    recent_range = max(previous_high - previous_low, 1e-9)
+    range_position = (close - previous_low) / recent_range
+
     return {
         "timeframe": label,
-        "time": candles[-1]["time"],
+        "time": latest["time"],
+        "open": _round_price(float(latest["open"])),
+        "high": _round_price(latest_high),
+        "low": _round_price(latest_low),
         "close": _round_price(close),
-        "previous_close": _round_price(
-            previous_close
-        ),
+        "previous_close": _round_price(previous_close),
         "ema20": _round_price(ema20),
         "ema50": _round_price(ema50),
+        "ema20_slope": _round_price(ema20_slope),
         "rsi": round(rsi, 2),
         "atr": _round_price(atr),
         "adx": round(directional["adx"], 2),
-        "plus_di": round(
-            directional["plus_di"],
-            2,
-        ),
-        "minus_di": round(
-            directional["minus_di"],
-            2,
-        ),
+        "plus_di": round(directional["plus_di"], 2),
+        "minus_di": round(directional["minus_di"], 2),
         "trend": trend,
         "structure": structure,
+        "regime": regime,
         "breakout": breakout,
         "pullback": pullback,
-        "recent_high": _round_price(
-            previous_high
-        ),
-        "recent_low": _round_price(
-            previous_low
+        "momentum": momentum,
+        "rejection": _candle_rejection(latest),
+        "recent_high": _round_price(previous_high),
+        "recent_low": _round_price(previous_low),
+        "range_position": round(range_position, 3),
+        "distance_to_ema20_atr": round(
+            abs(close - ema20) / max(atr, 1e-9),
+            3,
         ),
     }
 
 
-def _weighted_bias(
+def _direction_score(analysis: dict[str, Any]) -> int:
+    score = 0
+
+    if analysis["trend"] == BULLISH:
+        score += 2
+    elif analysis["trend"] == BEARISH:
+        score -= 2
+
+    if analysis["structure"] == BULLISH:
+        score += 1
+    elif analysis["structure"] == BEARISH:
+        score -= 1
+
+    if analysis["plus_di"] > analysis["minus_di"]:
+        score += 1
+    elif analysis["minus_di"] > analysis["plus_di"]:
+        score -= 1
+
+    if analysis["ema20_slope"] > 0:
+        score += 1
+    elif analysis["ema20_slope"] < 0:
+        score -= 1
+
+    return score
+
+
+def _hierarchical_bias(
     analyses: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    bullish_score = 0
-    bearish_score = 0
-    neutral_score = 0
+    component_scores = {
+        label: _direction_score(analyses[label])
+        for label in ("15m", "30m", "1h", "4h")
+    }
 
-    for label, analysis in analyses.items():
-        weight = TIMEFRAME_WEIGHTS[label]
-        trend = analysis["trend"]
+    composite = (
+        component_scores["1h"] * 3
+        + component_scores["30m"] * 2
+        + component_scores["15m"]
+        + component_scores["4h"]
+    )
 
-        if trend == "bullish":
-            bullish_score += weight
-        elif trend == "bearish":
-            bearish_score += weight
-        else:
-            neutral_score += weight
-
-        structure = analysis["structure"]
-
-        if structure == "bullish":
-            bullish_score += 1
-        elif structure == "bearish":
-            bearish_score += 1
-
-    difference = bullish_score - bearish_score
-
-    if difference >= 6:
-        direction = "bullish"
-    elif difference <= -6:
-        direction = "bearish"
+    if composite >= 5:
+        direction = BULLISH
+    elif composite <= -5:
+        direction = BEARISH
     else:
-        direction = "neutral"
+        direction = NEUTRAL
 
     return {
         "direction": direction,
-        "bullish_score": bullish_score,
-        "bearish_score": bearish_score,
-        "neutral_score": neutral_score,
-        "score_difference": difference,
+        "score": composite,
+        "strength": round(
+            min(abs(composite) / 35.0 * 100.0, 100.0),
+            1,
+        ),
+        "component_scores": component_scores,
+        "primary_1h": analyses["1h"]["trend"],
+        "structure_30m": analyses["30m"]["structure"],
+        "context_4h": analyses["4h"]["trend"],
     }
 
 
-def _build_signal(
+def _opposite(direction: str) -> str:
+    return BEARISH if direction == BULLISH else BULLISH
+
+
+def _one_minute_confirmation(
+    direction: str,
+    one_minute: dict[str, Any],
+) -> bool:
+    if direction == BULLISH:
+        return (
+            one_minute["momentum"] == BULLISH
+            or one_minute["rejection"] == BULLISH
+            or (
+                one_minute["close"] > one_minute["ema20"]
+                and one_minute["plus_di"]
+                >= one_minute["minus_di"]
+                and 48 <= one_minute["rsi"] <= 74
+            )
+        )
+
+    return (
+        one_minute["momentum"] == BEARISH
+        or one_minute["rejection"] == BEARISH
+        or (
+            one_minute["close"] < one_minute["ema20"]
+            and one_minute["minus_di"]
+            >= one_minute["plus_di"]
+            and 26 <= one_minute["rsi"] <= 52
+        )
+    )
+
+
+def _trend_pullback_candidate(
+    analyses: dict[str, dict[str, Any]],
+    bias: dict[str, Any],
+) -> dict[str, Any] | None:
+    direction = bias["direction"]
+
+    if direction not in {BULLISH, BEARISH}:
+        return None
+
+    one_hour = analyses["1h"]
+    thirty = analyses["30m"]
+    five = analyses["5m"]
+    one = analyses["1m"]
+
+    if (
+        one_hour["trend"] == _opposite(direction)
+        and thirty["structure"] == _opposite(direction)
+    ):
+        return None
+
+    near_value = five["distance_to_ema20_atr"] <= 0.60
+    five_minute_setup = (
+        five["pullback"] == direction
+        or (
+            near_value
+            and five["momentum"] in {direction, NEUTRAL}
+        )
+    )
+
+    if not five_minute_setup:
+        return None
+
+    if direction == BULLISH:
+        momentum_ok = 40 <= five["rsi"] <= 70
+    else:
+        momentum_ok = 30 <= five["rsi"] <= 60
+
+    if not momentum_ok:
+        return None
+
+    if not _one_minute_confirmation(direction, one):
+        return None
+
+    confidence = 81
+    reasons = [
+        f"1-hour/30-minute bias is {direction}",
+        "5-minute price has pulled back toward EMA20",
+        "1-minute chart confirms the entry direction",
+    ]
+
+    if one_hour["trend"] == direction:
+        confidence += 4
+        reasons.append("1-hour trend is aligned")
+
+    if thirty["structure"] == direction:
+        confidence += 3
+        reasons.append("30-minute structure is aligned")
+
+    if five["pullback"] == direction:
+        confidence += 3
+        reasons.append("5-minute EMA pullback is confirmed")
+
+    if five["adx"] >= 18:
+        confidence += 2
+        reasons.append("5-minute trend strength is adequate")
+
+    if one["rejection"] == direction:
+        confidence += 2
+        reasons.append("1-minute rejection candle confirms timing")
+
+    if analyses["4h"]["trend"] == _opposite(direction):
+        confidence -= 2
+        reasons.append("4-hour context is opposite, so size conservatively")
+
+    return {
+        "action": "BUY" if direction == BULLISH else "SELL",
+        "direction": direction,
+        "setup_type": "trend_pullback",
+        "confidence": min(max(confidence, 0), 95),
+        "reason": "Trend pullback with 1-minute confirmation",
+        "reasons": reasons,
+    }
+
+
+def _breakout_candidate(
     price: dict[str, Any],
     analyses: dict[str, dict[str, Any]],
     bias: dict[str, Any],
-) -> dict[str, Any]:
-    execution = analyses["5m"]
-    direction = bias["direction"]
+) -> dict[str, Any] | None:
+    five = analyses["5m"]
+    one = analyses["1m"]
+    thirty = analyses["30m"]
 
-    reasons: list[str] = []
+    direction = five["breakout"]
 
-    if direction == "neutral":
-        return {
-            "action": "WAIT",
-            "confidence": 70,
-            "reason": "Multi-timeframe direction is mixed",
-            "reasons": [
-                "No clear weighted bullish or bearish bias"
-            ],
-            "execution_timeframe": "5m",
-            "entry_zone": None,
-            "stop_loss": None,
-            "take_profits": [],
-            "risk_reward": None,
-        }
+    if direction not in {BULLISH, BEARISH}:
+        if (
+            one["breakout"] in {BULLISH, BEARISH}
+            and one["breakout"] == one["momentum"]
+        ):
+            direction = one["breakout"]
+        else:
+            return None
 
-    expected_trend = direction
+    if (
+        bias["direction"] == _opposite(direction)
+        and abs(bias["score"]) >= 12
+    ):
+        return None
 
-    higher_timeframes_aligned = all(
-        analyses[label]["trend"]
-        in {expected_trend, "neutral"}
-        for label in ("15m", "30m", "1h", "4h")
+    if five["adx"] < 15 and one["adx"] < 18:
+        return None
+
+    if not _one_minute_confirmation(direction, one):
+        return None
+
+    breakout_level = (
+        float(five["recent_high"])
+        if direction == BULLISH
+        else float(five["recent_low"])
     )
 
-    if not higher_timeframes_aligned:
-        return {
-            "action": "WAIT",
-            "confidence": 78,
-            "reason": "Higher timeframes conflict",
-            "reasons": [
-                "15m, 30m, 1h or 4h opposes the setup"
-            ],
-            "execution_timeframe": "5m",
-            "entry_zone": None,
-            "stop_loss": None,
-            "take_profits": [],
-            "risk_reward": None,
-        }
+    current_mid = float(price["mid"])
+    distance = abs(current_mid - breakout_level)
 
-    if execution["trend"] not in {
-        expected_trend,
-        "neutral",
-    }:
-        return {
-            "action": "WAIT",
-            "confidence": 80,
-            "reason": "5-minute trend conflicts",
-            "reasons": [
-                "Execution timeframe opposes the higher-timeframe bias"
-            ],
-            "execution_timeframe": "5m",
-            "entry_zone": None,
-            "stop_loss": None,
-            "take_profits": [],
-            "risk_reward": None,
-        }
+    if distance > float(five["atr"]) * 0.75:
+        return None
 
-    minimum_adx = (
-        14.0
-        if all(
-            analyses[label]["trend"]
-            == expected_trend
-            for label in ("15m", "30m", "1h")
+    confidence = 82
+    reasons = [
+        f"5-minute breakout is {direction}",
+        "1-minute momentum confirms continuation",
+        "Current price remains close to the breakout level",
+    ]
+
+    if bias["direction"] == direction:
+        confidence += 4
+        reasons.append("Higher-timeframe bias supports the breakout")
+
+    if thirty["structure"] == direction:
+        confidence += 3
+        reasons.append("30-minute structure supports continuation")
+
+    if five["adx"] >= 20:
+        confidence += 3
+        reasons.append("5-minute ADX confirms expansion")
+
+    if one["breakout"] == direction:
+        confidence += 2
+        reasons.append("1-minute breakout confirms timing")
+
+    return {
+        "action": "BUY" if direction == BULLISH else "SELL",
+        "direction": direction,
+        "setup_type": "breakout_continuation",
+        "confidence": min(max(confidence, 0), 95),
+        "reason": "Breakout continuation with momentum confirmation",
+        "reasons": reasons,
+    }
+
+
+def _range_reversal_candidate(
+    analyses: dict[str, dict[str, Any]],
+    bias: dict[str, Any],
+) -> dict[str, Any] | None:
+    thirty = analyses["30m"]
+    five = analyses["5m"]
+    one = analyses["1m"]
+
+    if thirty["regime"] == "trending" and abs(bias["score"]) >= 12:
+        return None
+
+    if thirty["adx"] > 25:
+        return None
+
+    range_position = float(thirty["range_position"])
+
+    if range_position <= 0.25:
+        direction = BULLISH
+        edge_reason = "Price is near the lower edge of the 30-minute range"
+        oscillator_ok = five["rsi"] <= 46 or one["rsi"] <= 42
+    elif range_position >= 0.75:
+        direction = BEARISH
+        edge_reason = "Price is near the upper edge of the 30-minute range"
+        oscillator_ok = five["rsi"] >= 54 or one["rsi"] >= 58
+    else:
+        return None
+
+    if not oscillator_ok:
+        return None
+
+    if not _one_minute_confirmation(direction, one):
+        return None
+
+    if (
+        bias["direction"] == _opposite(direction)
+        and abs(bias["score"]) >= 10
+    ):
+        return None
+
+    confidence = 81
+    reasons = [
+        edge_reason,
+        "5-minute momentum is stretched near the range edge",
+        "1-minute reversal confirmation is present",
+    ]
+
+    if one["rejection"] == direction:
+        confidence += 4
+        reasons.append("1-minute rejection candle confirms the reversal")
+
+    if five["structure"] == direction:
+        confidence += 2
+        reasons.append("5-minute structure has started to turn")
+
+    if bias["direction"] in {direction, NEUTRAL}:
+        confidence += 2
+        reasons.append("The reversal is not fighting a strong higher-timeframe bias")
+
+    if thirty["adx"] <= 18:
+        confidence += 2
+        reasons.append("30-minute conditions are consistent with a range")
+
+    return {
+        "action": "BUY" if direction == BULLISH else "SELL",
+        "direction": direction,
+        "setup_type": "range_reversal",
+        "confidence": min(max(confidence, 0), 93),
+        "reason": "Range-edge reversal with 1-minute confirmation",
+        "reasons": reasons,
+    }
+
+
+def _select_candidate(
+    price: dict[str, Any],
+    analyses: dict[str, dict[str, Any]],
+    bias: dict[str, Any],
+) -> dict[str, Any] | None:
+    candidates = [
+        candidate
+        for candidate in (
+            _trend_pullback_candidate(analyses, bias),
+            _breakout_candidate(price, analyses, bias),
+            _range_reversal_candidate(analyses, bias),
         )
-        else 17.0
+        if candidate is not None
+    ]
+
+    if not candidates:
+        return None
+
+    priority = {
+        "trend_pullback": 3,
+        "breakout_continuation": 2,
+        "range_reversal": 1,
+    }
+
+    return max(
+        candidates,
+        key=lambda item: (
+            int(item["confidence"]),
+            priority.get(str(item["setup_type"]), 0),
+        ),
     )
 
-    if execution["adx"] < minimum_adx:
-        return {
-            "action": "WAIT",
-            "confidence": 82,
-            "reason": (
-                "5-minute trend strength is below "
-                f"{minimum_adx:.0f}"
-            ),
-            "reasons": [
-                (
-                    f"Current 5-minute ADX is "
-                    f"{execution['adx']:.1f}"
-                )
-            ],
-            "execution_timeframe": "5m",
-            "entry_zone": None,
-            "stop_loss": None,
-            "take_profits": [],
-            "risk_reward": None,
-        }
+
+def _build_trade_signal(
+    candidate: dict[str, Any],
+    price: dict[str, Any],
+    analyses: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    direction = str(candidate["direction"])
+    action = str(candidate["action"])
+    setup_type = str(candidate["setup_type"])
+
+    five = analyses["5m"]
+    one = analyses["1m"]
+    thirty = analyses["30m"]
 
     mid = float(price["mid"])
-    atr = float(execution["atr"])
-    ema20 = float(execution["ema20"])
+    spread = float(price["spread"])
+    atr = max(float(five["atr"]), spread * 2.0, 0.001)
 
-    if atr <= 0:
-        return {
-            "action": "WAIT",
-            "confidence": 90,
-            "reason": "Invalid volatility measurement",
-            "reasons": ["ATR is not usable"],
-            "execution_timeframe": "5m",
-            "entry_zone": None,
-            "stop_loss": None,
-            "take_profits": [],
-            "risk_reward": None,
-        }
-
-    long_setup = direction == "bullish"
-
-    trigger_present = (
-        execution["pullback"] == direction
-        or execution["breakout"] == direction
-        or (
-            long_setup
-            and 52 <= execution["rsi"] <= 70
-            and mid >= ema20
+    if setup_type == "trend_pullback":
+        reference = float(five["ema20"])
+        entry_low = min(mid, reference) - atr * 0.06
+        entry_high = max(mid, reference) + atr * 0.06
+        maximum_stop_distance = atr * 2.10
+    elif setup_type == "breakout_continuation":
+        reference = (
+            float(five["recent_high"])
+            if direction == BULLISH
+            else float(five["recent_low"])
         )
-        or (
-            not long_setup
-            and 30 <= execution["rsi"] <= 48
-            and mid <= ema20
-        )
-    )
+        entry_low = min(mid, reference) - atr * 0.05
+        entry_high = max(mid, reference) + atr * 0.08
+        maximum_stop_distance = atr * 1.85
+    else:
+        entry_low = mid - atr * 0.12
+        entry_high = mid + atr * 0.12
+        maximum_stop_distance = atr * 1.70
 
-    if not trigger_present:
-        return {
-            "action": "WAIT",
-            "confidence": 84,
-            "reason": "Bias exists but entry trigger is missing",
-            "reasons": [
-                "Waiting for pullback, breakout or momentum confirmation"
-            ],
-            "execution_timeframe": "5m",
-            "entry_zone": None,
-            "stop_loss": None,
-            "take_profits": [],
-            "risk_reward": None,
-        }
+    average_entry = (entry_low + entry_high) / 2.0
+    minimum_stop_distance = max(atr * 0.85, spread * 4.0)
 
-    zone_width = atr * 0.10
+    if direction == BULLISH:
+        if setup_type == "range_reversal":
+            desired_stop = min(
+                float(thirty["recent_low"]) - atr * 0.20,
+                average_entry - minimum_stop_distance,
+            )
+        elif setup_type == "breakout_continuation":
+            desired_stop = min(
+                float(one["recent_low"]) - atr * 0.10,
+                float(five["recent_high"]) - atr * 0.65,
+                average_entry - minimum_stop_distance,
+            )
+        else:
+            desired_stop = min(
+                float(five["recent_low"]) - atr * 0.10,
+                float(one["recent_low"]) - atr * 0.10,
+                average_entry - minimum_stop_distance,
+            )
 
-    if long_setup:
-        action = "BUY"
-
-        entry_low = min(
-            mid,
-            ema20 + atr * 0.10,
-        )
-        entry_high = mid + zone_width
-
-        structural_stop = min(
-            float(execution["recent_low"]),
-            entry_low - atr * 1.15,
-        )
-
-        maximum_stop = entry_low - atr * 2.20
         stop_loss = max(
-            structural_stop,
-            maximum_stop,
+            desired_stop,
+            average_entry - maximum_stop_distance,
         )
 
-        average_entry = (
-            entry_low + entry_high
-        ) / 2.0
+        if stop_loss >= average_entry:
+            stop_loss = average_entry - minimum_stop_distance
 
-        risk_distance = (
-            average_entry - stop_loss
-        )
-
-        take_profits = [
+        risk_distance = average_entry - stop_loss
+        take_profit_prices = [
             average_entry + risk_distance,
-            average_entry + risk_distance * 2,
-            average_entry + risk_distance * 3,
+            average_entry + risk_distance * 2.0,
+            average_entry + risk_distance * 3.0,
         ]
 
     else:
-        action = "SELL"
+        if setup_type == "range_reversal":
+            desired_stop = max(
+                float(thirty["recent_high"]) + atr * 0.20,
+                average_entry + minimum_stop_distance,
+            )
+        elif setup_type == "breakout_continuation":
+            desired_stop = max(
+                float(one["recent_high"]) + atr * 0.10,
+                float(five["recent_low"]) + atr * 0.65,
+                average_entry + minimum_stop_distance,
+            )
+        else:
+            desired_stop = max(
+                float(five["recent_high"]) + atr * 0.10,
+                float(one["recent_high"]) + atr * 0.10,
+                average_entry + minimum_stop_distance,
+            )
 
-        entry_low = mid - zone_width
-        entry_high = max(
-            mid,
-            ema20 - atr * 0.10,
-        )
-
-        structural_stop = max(
-            float(execution["recent_high"]),
-            entry_high + atr * 1.15,
-        )
-
-        maximum_stop = entry_high + atr * 2.20
         stop_loss = min(
-            structural_stop,
-            maximum_stop,
+            desired_stop,
+            average_entry + maximum_stop_distance,
         )
 
-        average_entry = (
-            entry_low + entry_high
-        ) / 2.0
+        if stop_loss <= average_entry:
+            stop_loss = average_entry + minimum_stop_distance
 
-        risk_distance = (
-            stop_loss - average_entry
-        )
-
-        take_profits = [
+        risk_distance = stop_loss - average_entry
+        take_profit_prices = [
             average_entry - risk_distance,
-            average_entry - risk_distance * 2,
-            average_entry - risk_distance * 3,
+            average_entry - risk_distance * 2.0,
+            average_entry - risk_distance * 3.0,
         ]
-
-    alignment_points = min(
-        abs(bias["score_difference"]) * 2,
-        20,
-    )
-
-    adx_points = min(
-        max(execution["adx"] - minimum_adx, 0),
-        8,
-    )
-
-    structure_points = (
-        5
-        if execution["structure"] == direction
-        else 2
-    )
-
-    trigger_points = (
-        5
-        if execution["pullback"] == direction
-        or execution["breakout"] == direction
-        else 3
-    )
-
-    confidence = int(
-        min(
-            95,
-            60
-            + alignment_points
-            + adx_points
-            + structure_points
-            + trigger_points,
-        )
-    )
-
-    reasons.append(
-        f"Weighted market bias is {direction}"
-    )
-    reasons.append(
-        (
-            f"5-minute ADX is "
-            f"{execution['adx']:.1f}"
-        )
-    )
-    reasons.append(
-        (
-            f"15m trend: "
-            f"{analyses['15m']['trend']}"
-        )
-    )
-    reasons.append(
-        (
-            f"1h trend: "
-            f"{analyses['1h']['trend']}"
-        )
-    )
-
-    if execution["pullback"] == direction:
-        reasons.append("EMA20 pullback confirmed")
-
-    if execution["breakout"] == direction:
-        reasons.append("Recent range breakout confirmed")
 
     return {
         "action": action,
-        "confidence": confidence,
-        "reason": reasons[0],
-        "reasons": reasons,
+        "confidence": int(candidate["confidence"]),
+        "reason": candidate["reason"],
+        "reasons": candidate["reasons"],
+        "setup_type": setup_type,
         "execution_timeframe": "5m",
         "entry_zone": {
             "low": _round_price(entry_low),
             "high": _round_price(entry_high),
-            "average": _round_price(
-                average_entry
-            ),
+            "average": _round_price(average_entry),
         },
         "stop_loss": _round_price(stop_loss),
         "take_profits": [
             {
                 "name": "TP1",
-                "price": _round_price(
-                    take_profits[0]
-                ),
+                "price": _round_price(take_profit_prices[0]),
                 "risk_reward": 1.0,
             },
             {
                 "name": "TP2",
-                "price": _round_price(
-                    take_profits[1]
-                ),
+                "price": _round_price(take_profit_prices[1]),
                 "risk_reward": 2.0,
             },
             {
                 "name": "TP3",
-                "price": _round_price(
-                    take_profits[2]
-                ),
+                "price": _round_price(take_profit_prices[2]),
                 "risk_reward": 3.0,
             },
         ],
         "risk_reward": 3.0,
         "atr": _round_price(atr),
-        "spread": price["spread"],
+        "spread": _round_price(spread),
+    }
+
+
+def _build_wait_signal(
+    analyses: dict[str, dict[str, Any]],
+    bias: dict[str, Any],
+) -> dict[str, Any]:
+    five = analyses["5m"]
+    one = analyses["1m"]
+    thirty = analyses["30m"]
+
+    clarity = min(abs(int(bias["score"])) * 2, 20)
+    setup_progress = 0
+
+    if five["distance_to_ema20_atr"] <= 0.75:
+        setup_progress += 4
+    if five["breakout"] in {BULLISH, BEARISH}:
+        setup_progress += 5
+    if one["momentum"] in {BULLISH, BEARISH}:
+        setup_progress += 4
+    if one["rejection"] in {BULLISH, BEARISH}:
+        setup_progress += 4
+    if thirty["regime"] in {"trending", "ranging"}:
+        setup_progress += 3
+
+    confidence = int(
+        min(88, 58 + clarity + setup_progress)
+    )
+
+    if bias["direction"] == NEUTRAL:
+        reason = (
+            "Higher-timeframe direction is not clear enough yet"
+        )
+    elif not _one_minute_confirmation(bias["direction"], one):
+        reason = (
+            "Direction is present but the 1-minute entry trigger is missing"
+        )
+    else:
+        reason = (
+            "Direction is present but no complete 5-minute setup is ready"
+        )
+
+    return {
+        "action": "WAIT",
+        "confidence": confidence,
+        "reason": reason,
+        "reasons": [
+            f"Hierarchical bias: {bias['direction']}",
+            f"30-minute regime: {thirty['regime']}",
+            f"5-minute trend: {five['trend']}",
+            f"1-minute momentum: {one['momentum']}",
+        ],
+        "setup_type": None,
+        "execution_timeframe": "5m",
+        "entry_zone": None,
+        "stop_loss": None,
+        "take_profits": [],
+        "risk_reward": None,
     }
 
 
 def analyze_market() -> dict[str, Any]:
     """
-    Read and analyse XAUUSD across six timeframes.
+    Analyse XAUUSD using a hierarchy rather than equal voting:
 
-    This function performs market analysis only.
-    It cannot place, edit or close trades.
+    - 4h: broad context only
+    - 1h: primary directional bias
+    - 30m: structure and market regime
+    - 5m: trade setup
+    - 1m: entry timing
+
+    The function performs read-only market analysis and cannot
+    place, edit or close trades.
     """
 
     price = get_current_price()
@@ -819,18 +1015,29 @@ def analyze_market() -> dict[str, Any]:
             granularity=granularity,
             count=250,
         )
-
         analyses[label] = _timeframe_analysis(
             label=label,
             candles=candles,
         )
 
-    bias = _weighted_bias(analyses)
-
-    signal = _build_signal(
+    bias = _hierarchical_bias(analyses)
+    candidate = _select_candidate(
         price=price,
         analyses=analyses,
         bias=bias,
+    )
+
+    signal = (
+        _build_trade_signal(
+            candidate=candidate,
+            price=price,
+            analyses=analyses,
+        )
+        if candidate is not None
+        else _build_wait_signal(
+            analyses=analyses,
+            bias=bias,
+        )
     )
 
     return {
