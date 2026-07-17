@@ -40,7 +40,7 @@ def fetch_context(alert_timestamp: int) -> NewsContext:
     blocked = False
     reason = None
 
-        if settings.fmp_api_key:
+if settings.fmp_api_key:
         try:
             start = (now - timedelta(days=1)).date().isoformat()
             end = (now + timedelta(days=1)).date().isoformat()
