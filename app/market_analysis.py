@@ -461,30 +461,21 @@ def _direction_score(analysis: dict[str, Any]) -> int:
 def _hierarchical_bias(
     analyses: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    """
-    Build an intraday directional bias.
-
-    The 30-minute and 15-minute charts carry the most weight because
-    the scanner executes from the 5-minute chart. The 1-hour chart is
-    important context, while the 4-hour chart is deliberately a light
-    influence rather than a hard veto.
-    """
-
     component_scores = {
         label: _direction_score(analyses[label])
         for label in ("15m", "30m", "1h", "4h")
     }
 
     composite = (
-        component_scores["30m"] * 3
-        + component_scores["15m"] * 2
-        + component_scores["1h"] * 2
+        component_scores["1h"] * 3
+        + component_scores["30m"] * 2
+        + component_scores["15m"]
         + component_scores["4h"]
     )
 
-    if composite >= 6:
+    if composite >= 5:
         direction = BULLISH
-    elif composite <= -6:
+    elif composite <= -5:
         direction = BEARISH
     else:
         direction = NEUTRAL
@@ -493,7 +484,7 @@ def _hierarchical_bias(
         "direction": direction,
         "score": composite,
         "strength": round(
-            min(abs(composite) / 40.0 * 100.0, 100.0),
+            min(abs(composite) / 35.0 * 100.0, 100.0),
             1,
         ),
         "component_scores": component_scores,
@@ -507,23 +498,12 @@ def _opposite(direction: str) -> str:
     return BEARISH if direction == BULLISH else BULLISH
 
 
-def _one_minute_trigger(
+def _one_minute_confirmation(
     direction: str,
     one_minute: dict[str, Any],
-) -> dict[str, Any]:
-    """
-    Grade the 1-minute chart instead of treating it as a simple
-    pass/fail veto.
-
-    - strong: confirms the intended entry direction
-    - soft: neutral or early; may be accepted by a strong 5-minute setup
-    - opposed: actively moving against the intended trade and must block it
-    """
-
-    opposite = _opposite(direction)
-
+) -> bool:
     if direction == BULLISH:
-        strong = (
+        return (
             one_minute["momentum"] == BULLISH
             or one_minute["rejection"] == BULLISH
             or (
@@ -534,62 +514,16 @@ def _one_minute_trigger(
             )
         )
 
-        actively_opposed = (
-            (
-                one_minute["momentum"] == BEARISH
-                and one_minute["rejection"] == BEARISH
-            )
-            or (
-                one_minute["close"] < one_minute["ema20"]
-                and one_minute["minus_di"]
-                > one_minute["plus_di"] * 1.15
-                and one_minute["rsi"] <= 43
-            )
+    return (
+        one_minute["momentum"] == BEARISH
+        or one_minute["rejection"] == BEARISH
+        or (
+            one_minute["close"] < one_minute["ema20"]
+            and one_minute["minus_di"]
+            >= one_minute["plus_di"]
+            and 26 <= one_minute["rsi"] <= 52
         )
-    else:
-        strong = (
-            one_minute["momentum"] == BEARISH
-            or one_minute["rejection"] == BEARISH
-            or (
-                one_minute["close"] < one_minute["ema20"]
-                and one_minute["minus_di"]
-                >= one_minute["plus_di"]
-                and 26 <= one_minute["rsi"] <= 52
-            )
-        )
-
-        actively_opposed = (
-            (
-                one_minute["momentum"] == BULLISH
-                and one_minute["rejection"] == BULLISH
-            )
-            or (
-                one_minute["close"] > one_minute["ema20"]
-                and one_minute["plus_di"]
-                > one_minute["minus_di"] * 1.15
-                and one_minute["rsi"] >= 57
-            )
-        )
-
-    if strong:
-        return {
-            "state": "strong",
-            "confidence_adjustment": 2,
-            "reason": "1-minute chart confirms entry timing",
-        }
-
-    if actively_opposed:
-        return {
-            "state": "opposed",
-            "confidence_adjustment": -8,
-            "reason": f"1-minute momentum is actively {opposite}",
-        }
-
-    return {
-        "state": "soft",
-        "confidence_adjustment": -2,
-        "reason": "1-minute chart is neutral rather than actively opposing",
-    }
+    )
 
 
 def _trend_pullback_candidate(
@@ -632,16 +566,14 @@ def _trend_pullback_candidate(
     if not momentum_ok:
         return None
 
-    trigger = _one_minute_trigger(direction, one)
-
-    if trigger["state"] == "opposed":
+    if not _one_minute_confirmation(direction, one):
         return None
 
-    confidence = 83 + int(trigger["confidence_adjustment"])
+    confidence = 81
     reasons = [
         f"1-hour/30-minute bias is {direction}",
         "5-minute price has pulled back toward EMA20",
-        str(trigger["reason"]),
+        "1-minute chart confirms the entry direction",
     ]
 
     if one_hour["trend"] == direction:
@@ -660,23 +592,20 @@ def _trend_pullback_candidate(
         confidence += 2
         reasons.append("5-minute trend strength is adequate")
 
-    if trigger["state"] == "strong":
-        reasons.append("1-minute timing receives full confirmation credit")
-    else:
-        reasons.append(
-            "Neutral 1-minute timing is accepted because the 5-minute setup is strong"
-        )
+    if one["rejection"] == direction:
+        confidence += 2
+        reasons.append("1-minute rejection candle confirms timing")
 
     if analyses["4h"]["trend"] == _opposite(direction):
         confidence -= 2
-        reasons.append("4-hour context is opposite, so confidence is reduced")
+        reasons.append("4-hour context is opposite, so size conservatively")
 
     return {
         "action": "BUY" if direction == BULLISH else "SELL",
         "direction": direction,
         "setup_type": "trend_pullback",
         "confidence": min(max(confidence, 0), 95),
-        "reason": "Trend pullback with graded 1-minute timing",
+        "reason": "Trend pullback with 1-minute confirmation",
         "reasons": reasons,
     }
 
@@ -710,16 +639,7 @@ def _breakout_candidate(
     if five["adx"] < 15 and one["adx"] < 18:
         return None
 
-    trigger = _one_minute_trigger(direction, one)
-
-    if trigger["state"] == "opposed":
-        return None
-
-    if trigger["state"] == "soft" and not (
-        five["breakout"] == direction
-        and bias["direction"] == direction
-        and five["adx"] >= 20
-    ):
+    if not _one_minute_confirmation(direction, one):
         return None
 
     breakout_level = (
@@ -734,10 +654,10 @@ def _breakout_candidate(
     if distance > float(five["atr"]) * 0.75:
         return None
 
-    confidence = 83 + int(trigger["confidence_adjustment"])
+    confidence = 82
     reasons = [
         f"5-minute breakout is {direction}",
-        str(trigger["reason"]),
+        "1-minute momentum confirms continuation",
         "Current price remains close to the breakout level",
     ]
 
@@ -762,151 +682,7 @@ def _breakout_candidate(
         "direction": direction,
         "setup_type": "breakout_continuation",
         "confidence": min(max(confidence, 0), 95),
-        "reason": "Breakout continuation with graded 1-minute timing",
-        "reasons": reasons,
-    }
-
-
-def _momentum_continuation_candidate(
-    analyses: dict[str, dict[str, Any]],
-    bias: dict[str, Any],
-) -> dict[str, Any] | None:
-    """
-    Capture a confirmed intraday continuation move.
-
-    A ranging 30-minute chart is allowed because intraday trends can
-    develop inside a wider 30-minute range. The 30-minute chart blocks
-    the setup only when it is strongly trending in the opposite
-    direction or price is already at an unbroken range extreme.
-    """
-
-    direction = bias["direction"]
-
-    if direction not in {BULLISH, BEARISH}:
-        return None
-
-    one_hour = analyses["1h"]
-    thirty = analyses["30m"]
-    fifteen = analyses["15m"]
-    five = analyses["5m"]
-    one = analyses["1m"]
-    opposite = _opposite(direction)
-
-    # The execution chart must show a real continuation, not merely a
-    # directional guess.
-    if five["trend"] != direction:
-        return None
-    if five["structure"] != direction:
-        return None
-    if five["momentum"] != direction:
-        return None
-    if five["adx"] < 22:
-        return None
-
-    # The 15-minute chart must support the move through either trend or
-    # structure. This prevents one isolated 5-minute burst from firing.
-    if fifteen["trend"] != direction and fifteen["structure"] != direction:
-        return None
-
-    # A clearly established opposite 30-minute trend is a genuine veto.
-    # A neutral/ranging 30-minute chart is context, not a veto.
-    if (
-        thirty["trend"] == opposite
-        and thirty["structure"] == opposite
-        and thirty["adx"] >= 22
-    ):
-        return None
-
-    # Do not fight both higher timeframes simultaneously.
-    if (
-        one_hour["trend"] == opposite
-        and analyses["4h"]["trend"] == opposite
-    ):
-        return None
-
-    distance = float(five["distance_to_ema20_atr"])
-    if distance < 0.25 or distance > 1.35:
-        return None
-
-    if direction == BULLISH:
-        oscillator_ok = 52 <= five["rsi"] <= 74
-        at_unbroken_range_extreme = (
-            float(thirty["range_position"]) >= 0.94
-            and five["breakout"] != BULLISH
-        )
-    else:
-        oscillator_ok = 26 <= five["rsi"] <= 48
-        at_unbroken_range_extreme = (
-            float(thirty["range_position"]) <= 0.06
-            and five["breakout"] != BEARISH
-        )
-
-    if not oscillator_ok or at_unbroken_range_extreme:
-        return None
-
-    # Momentum entries are already moving, so immediate 1-minute
-    # confirmation remains mandatory.
-    trigger = _one_minute_trigger(direction, one)
-    if trigger["state"] != "strong":
-        return None
-
-    confidence = 82
-    reasons = [
-        f"Intraday bias is {direction}",
-        "5-minute trend, structure and momentum are aligned",
-        "15-minute chart supports continuation",
-        "1-minute chart confirms immediate entry timing",
-    ]
-
-    if abs(int(bias["score"])) >= 10:
-        confidence += 3
-        reasons.append("Intraday directional score is clear")
-    elif abs(int(bias["score"])) >= 7:
-        confidence += 1
-        reasons.append("Intraday directional score is adequate")
-
-    if fifteen["trend"] == direction:
-        confidence += 3
-        reasons.append("15-minute trend is aligned")
-    else:
-        confidence += 1
-        reasons.append("15-minute structure is aligned")
-
-    if thirty["structure"] == direction:
-        confidence += 3
-        reasons.append("30-minute structure supports continuation")
-    elif thirty["trend"] != opposite:
-        confidence += 1
-        reasons.append("30-minute chart is not opposing the trade")
-
-    if five["adx"] >= 30:
-        confidence += 3
-        reasons.append("5-minute ADX shows strong trend expansion")
-    else:
-        confidence += 1
-        reasons.append("5-minute ADX is adequate")
-
-    confidence += 2
-    reasons.append("1-minute confirmation receives full timing credit")
-
-    if one_hour["trend"] == direction:
-        confidence += 2
-        reasons.append("1-hour trend is aligned")
-
-    if distance <= 1.05:
-        confidence += 1
-        reasons.append("Price is not excessively extended from 5-minute EMA20")
-
-    if analyses["4h"]["trend"] == opposite:
-        confidence -= 1
-        reasons.append("4-hour context is opposite, so confidence is reduced slightly")
-
-    return {
-        "action": "BUY" if direction == BULLISH else "SELL",
-        "direction": direction,
-        "setup_type": "momentum_continuation",
-        "confidence": min(max(confidence, 0), 95),
-        "reason": "Intraday momentum continuation with confirmed 1-minute timing",
+        "reason": "Breakout continuation with momentum confirmation",
         "reasons": reasons,
     }
 
@@ -941,9 +717,7 @@ def _range_reversal_candidate(
     if not oscillator_ok:
         return None
 
-    trigger = _one_minute_trigger(direction, one)
-
-    if trigger["state"] != "strong":
+    if not _one_minute_confirmation(direction, one):
         return None
 
     if (
@@ -995,7 +769,6 @@ def _select_candidate(
         for candidate in (
             _trend_pullback_candidate(analyses, bias),
             _breakout_candidate(price, analyses, bias),
-            _momentum_continuation_candidate(analyses, bias),
             _range_reversal_candidate(analyses, bias),
         )
         if candidate is not None
@@ -1005,9 +778,8 @@ def _select_candidate(
         return None
 
     priority = {
-        "trend_pullback": 4,
-        "breakout_continuation": 3,
-        "momentum_continuation": 2,
+        "trend_pullback": 3,
+        "breakout_continuation": 2,
         "range_reversal": 1,
     }
 
@@ -1051,11 +823,6 @@ def _build_trade_signal(
         entry_low = min(mid, reference) - atr * 0.05
         entry_high = max(mid, reference) + atr * 0.08
         maximum_stop_distance = atr * 1.85
-    elif setup_type == "momentum_continuation":
-        reference = float(one["ema20"])
-        entry_low = min(mid, reference) - atr * 0.04
-        entry_high = max(mid, reference) + atr * 0.06
-        maximum_stop_distance = atr * 1.80
     else:
         entry_low = mid - atr * 0.12
         entry_high = mid + atr * 0.12
@@ -1074,12 +841,6 @@ def _build_trade_signal(
             desired_stop = min(
                 float(one["recent_low"]) - atr * 0.10,
                 float(five["recent_high"]) - atr * 0.65,
-                average_entry - minimum_stop_distance,
-            )
-        elif setup_type == "momentum_continuation":
-            desired_stop = min(
-                float(one["recent_low"]) - atr * 0.10,
-                float(five["ema20"]) - atr * 0.35,
                 average_entry - minimum_stop_distance,
             )
         else:
@@ -1114,12 +875,6 @@ def _build_trade_signal(
             desired_stop = max(
                 float(one["recent_high"]) + atr * 0.10,
                 float(five["recent_low"]) + atr * 0.65,
-                average_entry + minimum_stop_distance,
-            )
-        elif setup_type == "momentum_continuation":
-            desired_stop = max(
-                float(one["recent_high"]) + atr * 0.10,
-                float(five["ema20"]) + atr * 0.35,
                 average_entry + minimum_stop_distance,
             )
         else:
@@ -1186,7 +941,6 @@ def _build_wait_signal(
 ) -> dict[str, Any]:
     five = analyses["5m"]
     one = analyses["1m"]
-    fifteen = analyses["15m"]
     thirty = analyses["30m"]
 
     clarity = min(abs(int(bias["score"])) * 2, 20)
@@ -1197,86 +951,28 @@ def _build_wait_signal(
     if five["breakout"] in {BULLISH, BEARISH}:
         setup_progress += 5
     if one["momentum"] in {BULLISH, BEARISH}:
-        setup_progress += 3
+        setup_progress += 4
     if one["rejection"] in {BULLISH, BEARISH}:
-        setup_progress += 3
+        setup_progress += 4
     if thirty["regime"] in {"trending", "ranging"}:
         setup_progress += 3
 
-    direction = bias["direction"]
-    trigger = (
-        _one_minute_trigger(direction, one)
-        if direction in {BULLISH, BEARISH}
-        else {
-            "state": "not_applicable",
-            "reason": "No directional bias",
-        }
-    )
-
-    if trigger["state"] == "strong":
-        setup_progress += 4
-    elif trigger["state"] == "soft":
-        setup_progress += 2
-
     confidence = int(
-        min(87, 56 + clarity + setup_progress)
+        min(88, 58 + clarity + setup_progress)
     )
 
-    if direction == NEUTRAL:
-        reason = "Higher-timeframe direction is not clear enough yet"
+    if bias["direction"] == NEUTRAL:
+        reason = (
+            "Higher-timeframe direction is not clear enough yet"
+        )
+    elif not _one_minute_confirmation(bias["direction"], one):
+        reason = (
+            "Direction is present but the 1-minute entry trigger is missing"
+        )
     else:
-        near_value = five["distance_to_ema20_atr"] <= 0.60
-        pullback_forming = (
-            five["pullback"] == direction
-            or (
-                near_value
-                and five["momentum"] in {direction, NEUTRAL}
-            )
+        reason = (
+            "Direction is present but no complete 5-minute setup is ready"
         )
-        breakout_forming = (
-            five["breakout"] == direction
-            or (
-                one["breakout"] == direction
-                and one["momentum"] == direction
-            )
-        )
-        continuation_forming = (
-            five["trend"] == direction
-            and five["structure"] == direction
-            and five["momentum"] == direction
-            and five["adx"] >= 24
-            and (
-                fifteen["trend"] == direction
-                or fifteen["structure"] == direction
-            )
-        )
-
-        if not (
-            pullback_forming
-            or breakout_forming
-            or continuation_forming
-        ):
-            reason = "Direction is present but no complete 5-minute setup is ready"
-        elif continuation_forming and trigger["state"] != "strong":
-            reason = (
-                "5-minute momentum continuation is forming, but the "
-                "1-minute chart has not confirmed entry timing"
-            )
-        elif trigger["state"] == "opposed":
-            reason = (
-                "A 5-minute setup is forming, but 1-minute momentum is "
-                "actively opposing the entry"
-            )
-        elif trigger["state"] == "soft":
-            reason = (
-                "A 5-minute setup is forming; neutral 1-minute timing is "
-                "allowed only when the full quality score passes"
-            )
-        else:
-            reason = (
-                "The setup is close, but another structure, extension or "
-                "risk filter has not passed"
-            )
 
     return {
         "action": "WAIT",
@@ -1286,10 +982,7 @@ def _build_wait_signal(
             f"Hierarchical bias: {bias['direction']}",
             f"30-minute regime: {thirty['regime']}",
             f"5-minute trend: {five['trend']}",
-            f"5-minute structure: {five['structure']}",
-            f"5-minute momentum: {five['momentum']}",
             f"1-minute momentum: {one['momentum']}",
-            f"1-minute trigger state: {trigger['state']}",
         ],
         "setup_type": None,
         "execution_timeframe": "5m",
@@ -1307,7 +1000,7 @@ def analyze_market() -> dict[str, Any]:
     - 4h: broad context only
     - 1h: primary directional bias
     - 30m: structure and market regime
-    - 5m: pullback, breakout, momentum-continuation or range setup
+    - 5m: trade setup
     - 1m: entry timing
 
     The function performs read-only market analysis and cannot
