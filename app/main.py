@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Query
 from .ai import review
 from .config import settings
 from .db import alert_exists, init_db, list_signals, save_signal
+from .market_analysis import analyze_market
 from .models import SignalDecision, TradingViewAlert
 from .news import fetch_context
 from .notifications import send_telegram
@@ -27,7 +28,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="XAUUSD AI Assistant",
-    version="1.1.0",
+    version="1.2.0",
     lifespan=lifespan,
 )
 
@@ -86,9 +87,9 @@ def health_oanda():
 @app.get("/health/oanda/market")
 def health_oanda_market():
     """
-    Manually test the live XAUUSD price and candle feed.
+    Test the live XAUUSD price and candle feed.
 
-    This endpoint is read-only and cannot place trades.
+    This endpoint is read-only.
     """
 
     try:
@@ -119,6 +120,26 @@ def health_oanda_market():
             "latest_completed_candles": latest_candles,
             "read_only": True,
         }
+
+    except Exception as exc:
+        return {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "instrument": settings.oanda_instrument,
+            "read_only": True,
+        }
+
+
+@app.get("/health/oanda/analysis")
+def health_oanda_analysis():
+    """
+    Run the complete multi-timeframe XAUUSD analysis.
+
+    This endpoint cannot place, edit or close trades.
+    """
+
+    try:
+        return analyze_market()
 
     except Exception as exc:
         return {
