@@ -8,12 +8,17 @@ from .db import (
     save_scanner_signal,
     scanner_signal_exists,
 )
-from .live_signal import build_live_signal
+from .live_signal import (
+    MINIMUM_SIGNAL_CONFIDENCE,
+    build_live_signal,
+)
 from .notifications import send_live_signal
 
 
-SCANNER_COOLDOWN_MINUTES = 60
-MINIMUM_CONFIDENCE = 90
+# Thirty minutes still prevents Telegram spam while allowing more
+# than one legitimate intraday setup in the same direction.
+SCANNER_COOLDOWN_MINUTES = 30
+MINIMUM_CONFIDENCE = MINIMUM_SIGNAL_CONFIDENCE
 
 
 def _parse_datetime(
@@ -46,15 +51,13 @@ def _signal_fingerprint(
     """
     Create a stable identifier for one scanner setup.
 
-    The completed 5-minute candle time is included so
-    repeated scans of the same candle cannot send the
-    same signal more than once.
+    The completed 5-minute candle time is included so repeated scans
+    of the same candle cannot send the same signal more than once.
     """
 
     market = result.get("market") or {}
     timeframes = market.get("timeframes") or {}
     five_minute = timeframes.get("5m") or {}
-
     take_profits = result.get(
         "take_profits",
         [],
@@ -79,6 +82,9 @@ def _signal_fingerprint(
             "XAU_USD",
         ),
         "action": result.get("action"),
+        "setup_type": result.get(
+            "setup_type"
+        ),
         "five_minute_candle": five_minute.get(
             "time"
         ),
@@ -104,8 +110,8 @@ def _same_direction_cooldown_active(
     result: dict[str, Any],
 ) -> bool:
     """
-    Prevent repeated signals in the same direction for
-    one hour after a Telegram signal has been sent.
+    Prevent repeated signals in the same direction for thirty minutes
+    after a Telegram signal has been sent.
     """
 
     latest = get_latest_scanner_signal()
@@ -122,7 +128,6 @@ def _same_direction_cooldown_active(
     current_action = str(
         result.get("action", "")
     ).upper()
-
     latest_action = str(
         latest.get("action", "")
     ).upper()
@@ -150,14 +155,13 @@ def _price_is_inside_entry_zone(
     result: dict[str, Any],
 ) -> bool:
     """
-    Refuse to send a signal when the current market price
-    has already moved outside its calculated entry zone.
+    Refuse to send a signal when the current market price has already
+    moved outside its calculated entry zone.
     """
 
     entry_zone = result.get(
         "entry_zone"
     )
-
     market = result.get("market") or {}
     price = market.get("price") or {}
 
@@ -171,15 +175,12 @@ def _price_is_inside_entry_zone(
         current_mid = float(
             price["mid"]
         )
-
         entry_low = float(
             entry_zone["low"]
         )
-
         entry_high = float(
             entry_zone["high"]
         )
-
     except (
         KeyError,
         TypeError,
@@ -199,11 +200,10 @@ def run_scanner_once() -> dict[str, Any]:
     Run one complete XAUUSD scanning cycle.
 
     This function:
-
-    - reads live OANDA prices and candles
+    - reads live OANDA prices and completed candles
     - checks the official economic calendar
-    - evaluates the multi-timeframe setup
-    - blocks low-confidence or stale entries
+    - evaluates the hierarchical multi-timeframe setup
+    - blocks low-quality or stale entries
     - prevents duplicate Telegram signals
     - records released signals persistently
 
@@ -211,11 +211,9 @@ def run_scanner_once() -> dict[str, Any]:
     """
 
     result = build_live_signal()
-
     action = str(
         result.get("action", "WAIT")
     ).upper()
-
     confidence = int(
         result.get("confidence", 0)
         or 0
@@ -325,7 +323,6 @@ def run_scanner_once() -> dict[str, Any]:
             result,
             include_wait=False,
         )
-
     finally:
         save_scanner_signal(
             fingerprint=fingerprint,
@@ -342,6 +339,9 @@ def run_scanner_once() -> dict[str, Any]:
         "action": action,
         "confidence": confidence,
         "reason": result.get("reason"),
+        "setup_type": result.get(
+            "setup_type"
+        ),
         "entry": result.get("entry"),
         "stop_loss": result.get(
             "stop_loss"
