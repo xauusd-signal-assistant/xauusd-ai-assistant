@@ -22,7 +22,7 @@ def health():
         "status": "ok",
         "openai": bool(settings.enable_openai and settings.openai_api_key),
         "telegram": bool(settings.telegram_bot_token and settings.telegram_chat_id),
-        "economic_calendar": bool(settings.finnhub_api_key),
+        "economic_calendar": bool(settings.fmp_api_key),
         "news": bool(settings.newsapi_key),
         "signal_window_uk": f"{settings.session_start}-{settings.session_end}",
         "blackout_uk": f"{settings.hard_blackout_start}-{settings.hard_blackout_end}",
