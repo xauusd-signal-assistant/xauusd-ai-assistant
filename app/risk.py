@@ -14,7 +14,7 @@ def rules_decision(alert: TradingViewAlert):
     if alert.open_positions >= 1: return wait("An XAUUSD trade is already open")
     if alert.spread is not None and alert.spread > alert.atr * 0.12: return wait("Spread is too high")
     if alert.setup == "none": return wait("No confirmed setup")
-    if alert.adx < 20: return wait("Market trend is too weak")
+    if alert.adx < 17: return wait("Market trend is too weak")
 
     direction = "bullish" if alert.setup == "long" else "bearish"
     action = "BUY" if direction == "bullish" else "SELL"
