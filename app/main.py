@@ -1,4 +1,5 @@
 import hmac
+import logging
 import time
 from contextlib import asynccontextmanager
 
@@ -14,7 +15,7 @@ from .db import (
     list_signals,
     save_signal,
 )
-from .live_signal import build_live_signal
+from .live_signal import MINIMUM_SIGNAL_CONFIDENCE, build_live_signal
 from .market_analysis import analyze_market
 from .models import SignalDecision, TradingViewAlert
 from .news import fetch_context
@@ -26,13 +27,15 @@ from .oanda_client import (
 )
 from .position_size import add_lots
 from .risk import rules_decision, wait
-from .scanner import run_scanner_once
+from .scanner import SCANNER_COOLDOWN_MINUTES
+
+
+LOGGER = logging.getLogger("uvicorn.error")
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
-
     scanner_task = start_auto_scanner()
 
     try:
@@ -43,7 +46,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="XAUUSD AI Assistant",
-    version="1.5.0",
+    version="1.6.0",
     lifespan=lifespan,
 )
 
@@ -68,6 +71,10 @@ def health():
         ),
         "scanner_automatic": True,
         "scanner_interval_seconds": 60,
+        "scanner_min_confidence": MINIMUM_SIGNAL_CONFIDENCE,
+        "scanner_same_direction_cooldown_minutes": (
+            SCANNER_COOLDOWN_MINUTES
+        ),
         "signal_window_uk": (
             f"{settings.session_start}-"
             f"{settings.session_end}"
@@ -79,6 +86,7 @@ def health():
         "demo_balance_gbp": settings.demo_balance_gbp,
         "live_balance_gbp": settings.live_balance_gbp,
         "database_path": settings.database_path,
+        "automatic_order_execution": False,
     }
 
 
@@ -105,14 +113,12 @@ def health_oanda():
 @app.get("/health/oanda/market")
 def health_oanda_market():
     """
-    Test the live XAUUSD price and candle feed.
-
+    Test the live XAUUSD price and completed-candle feed.
     This endpoint is read-only.
     """
 
     try:
         price = get_current_price()
-
         timeframes = {
             "1m": "M1",
             "5m": "M5",
@@ -129,7 +135,6 @@ def health_oanda_market():
                 granularity=granularity,
                 count=20,
             )
-
             latest_candles[label] = candles[-1]
 
         return {
@@ -141,6 +146,7 @@ def health_oanda_market():
         }
 
     except Exception as exc:
+        LOGGER.exception("OANDA market health check failed")
         return {
             "status": "error",
             "error_type": type(exc).__name__,
@@ -152,15 +158,14 @@ def health_oanda_market():
 @app.get("/health/oanda/analysis")
 def health_oanda_analysis():
     """
-    Run the multi-timeframe technical analysis.
-
+    Run the hierarchical multi-timeframe technical analysis.
     This endpoint is read-only.
     """
 
     try:
         return analyze_market()
-
     except Exception as exc:
+        LOGGER.exception("OANDA technical analysis failed")
         return {
             "status": "error",
             "error_type": type(exc).__name__,
@@ -173,14 +178,13 @@ def health_oanda_analysis():
 def health_oanda_live_signal():
     """
     Build one complete live signal without sending it.
-
     This endpoint is read-only.
     """
 
     try:
         return build_live_signal()
-
     except Exception as exc:
+        LOGGER.exception("Live-signal preview failed")
         return {
             "status": "error",
             "error_type": type(exc).__name__,
@@ -190,20 +194,25 @@ def health_oanda_live_signal():
 
 
 @app.get("/health/oanda/scanner/run")
-def run_scanner_test():
+def run_scanner_preview():
     """
-    Run one manual scanner cycle.
+    Build a manual scanner preview without sending Telegram messages.
 
-    A valid BUY or SELL can be sent to Telegram.
-    WAIT decisions are not sent.
-
-    This endpoint cannot place, edit or close trades.
+    The automatic background scanner remains responsible for sending
+    qualified BUY/SELL alerts. Keeping this public route read-only
+    prevents another person from triggering Telegram alerts.
     """
 
     try:
-        return run_scanner_once()
-
+        result = build_live_signal()
+        return {
+            **result,
+            "manual_preview": True,
+            "sent_to_telegram": False,
+            "read_only": True,
+        }
     except Exception as exc:
+        LOGGER.exception("Manual scanner preview failed")
         return {
             "status": "error",
             "error_type": type(exc).__name__,
@@ -255,7 +264,6 @@ def webhook(alert: TradingViewAlert):
             or "High-impact US event",
             confidence=98,
         )
-
     else:
         try:
             decision = review(
@@ -263,15 +271,16 @@ def webhook(alert: TradingViewAlert):
                 baseline,
                 context.as_dict(),
             )
-
         except Exception:
+            LOGGER.exception(
+                "OpenAI review failed; using deterministic fallback"
+            )
             baseline.source = "fallback"
             decision = baseline
 
-    decision = add_lots(
-        alert,
-        decision,
-    )
+    # add_lots accepts the completed decision only.
+    # Passing both alert and decision caused the previous 500 error.
+    decision = add_lots(decision)
 
     save_signal(
         alert,
@@ -281,7 +290,9 @@ def webhook(alert: TradingViewAlert):
     try:
         send_telegram(decision)
     except Exception:
-        pass
+        LOGGER.exception(
+            "TradingView Telegram notification failed"
+        )
 
     return decision
 
