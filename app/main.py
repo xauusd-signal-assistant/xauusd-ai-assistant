@@ -6,7 +6,13 @@ from fastapi import FastAPI, HTTPException, Query
 
 from .ai import review
 from .config import settings
-from .db import alert_exists, init_db, list_signals, save_signal
+from .db import (
+    alert_exists,
+    init_db,
+    list_scanner_signals,
+    list_signals,
+    save_signal,
+)
 from .live_signal import build_live_signal
 from .market_analysis import analyze_market
 from .models import SignalDecision, TradingViewAlert
@@ -19,6 +25,7 @@ from .oanda_client import (
 )
 from .position_size import add_lots
 from .risk import rules_decision, wait
+from .scanner import run_scanner_once
 
 
 @asynccontextmanager
@@ -29,7 +36,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="XAUUSD AI Assistant",
-    version="1.3.0",
+    version="1.4.0",
     lifespan=lifespan,
 )
 
@@ -46,12 +53,13 @@ def health():
             settings.telegram_bot_token
             and settings.telegram_chat_id
         ),
-        "economic_calendar": bool(settings.fmp_api_key),
+        "economic_calendar": True,
         "news": bool(settings.newsapi_key),
         "oanda_configured": bool(
             settings.oanda_api_token
             and settings.oanda_account_id
         ),
+        "scanner_automatic": False,
         "signal_window_uk": (
             f"{settings.session_start}-"
             f"{settings.session_end}"
@@ -62,6 +70,7 @@ def health():
         ),
         "demo_balance_gbp": settings.demo_balance_gbp,
         "live_balance_gbp": settings.live_balance_gbp,
+        "database_path": settings.database_path,
     }
 
 
@@ -112,6 +121,7 @@ def health_oanda_market():
                 granularity=granularity,
                 count=20,
             )
+
             latest_candles[label] = candles[-1]
 
         return {
@@ -154,16 +164,9 @@ def health_oanda_analysis():
 @app.get("/health/oanda/live-signal")
 def health_oanda_live_signal():
     """
-    Build one complete signal using:
+    Build one complete live signal without sending it.
 
-    - live OANDA market data
-    - multi-timeframe analysis
-    - trading-session checks
-    - economic-calendar protection
-    - confidence filtering
-    - estimated lot sizing
-
-    This endpoint cannot place, edit or close trades.
+    This endpoint is read-only.
     """
 
     try:
@@ -174,6 +177,30 @@ def health_oanda_live_signal():
             "status": "error",
             "error_type": type(exc).__name__,
             "instrument": settings.oanda_instrument,
+            "read_only": True,
+        }
+
+
+@app.get("/health/oanda/scanner/run")
+def run_scanner_test():
+    """
+    Run one complete scanner cycle.
+
+    A valid BUY or SELL can be sent to Telegram.
+    WAIT decisions are not sent.
+
+    This endpoint cannot place, edit or close trades.
+    """
+
+    try:
+        return run_scanner_once()
+
+    except Exception as exc:
+        return {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "instrument": settings.oanda_instrument,
+            "sent_to_telegram": False,
             "read_only": True,
         }
 
@@ -195,7 +222,9 @@ def webhook(alert: TradingViewAlert):
         )
 
     current_timestamp = int(time.time())
-    alert_age = abs(current_timestamp - alert.timestamp)
+    alert_age = abs(
+        current_timestamp - alert.timestamp
+    )
 
     if alert_age > settings.max_alert_age_seconds:
         raise HTTPException(
@@ -218,6 +247,7 @@ def webhook(alert: TradingViewAlert):
             or "High-impact US event",
             confidence=98,
         )
+
     else:
         try:
             decision = review(
@@ -225,12 +255,20 @@ def webhook(alert: TradingViewAlert):
                 baseline,
                 context.as_dict(),
             )
+
         except Exception:
             baseline.source = "fallback"
             decision = baseline
 
-    decision = add_lots(alert, decision)
-    save_signal(alert, decision)
+    decision = add_lots(
+        alert,
+        decision,
+    )
+
+    save_signal(
+        alert,
+        decision,
+    )
 
     try:
         send_telegram(decision)
@@ -249,3 +287,14 @@ def signals(
     ),
 ):
     return list_signals(limit)
+
+
+@app.get("/scanner-signals")
+def scanner_signals(
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=500,
+    ),
+):
+    return list_scanner_signals(limit)
