@@ -9,7 +9,9 @@ from .news import fetch_context
 from .session import trading_window_status
 
 
-MINIMUM_SIGNAL_CONFIDENCE = 90
+# Demo-testing release threshold. This is a technical-quality score,
+# not a claimed probability that the trade will win.
+MINIMUM_SIGNAL_CONFIDENCE = 80
 SIGNAL_EXPIRY_MINUTES = 15
 
 
@@ -29,7 +31,6 @@ def _floor_to_lot_step(
     ) * step
 
     step_text = f"{step:.10f}".rstrip("0")
-
     decimal_places = (
         len(step_text.split(".")[1])
         if "." in step_text
@@ -84,17 +85,14 @@ def _calculate_lot_size(
         * risk_percent
         / 100.0
     )
-
     risk_usd = (
         risk_gbp
         * settings.gbpusd_rate
     )
-
     loss_per_lot_usd = (
         stop_distance
         * settings.xauusd_contract_size
     )
-
     raw_lot = (
         risk_usd
         / loss_per_lot_usd
@@ -108,13 +106,11 @@ def _calculate_lot_size(
             "Calculated size is below the "
             "configured minimum lot"
         )
-
     else:
         capped_lot = min(
             raw_lot,
             settings.xauusd_max_lot,
         )
-
         lot = _floor_to_lot_step(
             capped_lot,
             settings.xauusd_lot_step,
@@ -162,6 +158,7 @@ def _wait_result(
         "action": "WAIT",
         "confidence": confidence,
         "reason": reason,
+        "setup_type": None,
         "entry_zone": None,
         "entry": None,
         "stop_loss": None,
@@ -194,9 +191,7 @@ def _calendar_is_unavailable(
 def _format_lot(
     sizing: dict[str, Any],
 ) -> str:
-    lot = float(
-        sizing["lot"]
-    )
+    lot = float(sizing["lot"])
 
     if lot <= 0:
         return "Below minimum lot"
@@ -208,20 +203,19 @@ def _build_telegram_message(
     result: dict[str, Any],
 ) -> str:
     action = result["action"]
-
-    icon = (
-        "🟢"
-        if action == "BUY"
-        else "🔴"
-    )
-
+    icon = "🟢" if action == "BUY" else "🔴"
     entry_zone = result["entry_zone"]
     take_profits = result["take_profits"]
+    setup_type = str(
+        result.get("setup_type")
+        or "qualified_setup"
+    ).replace("_", " ").title()
 
     lines = [
         f"{icon} {action} XAUUSD",
         "",
         "Chart: 5 Minute",
+        f"Setup: {setup_type}",
         (
             "Entry zone: "
             f"{entry_zone['low']:.3f}"
@@ -275,6 +269,7 @@ def _build_telegram_message(
             "Lot sizes are estimates until "
             "MT5 is connected."
         ),
+        "Manual approval only — no order was placed.",
     ]
 
     return "\n".join(lines)
@@ -284,12 +279,12 @@ def build_live_signal() -> dict[str, Any]:
     """
     Build one complete read-only XAUUSD decision using:
 
-    - live OANDA prices and candles
-    - multi-timeframe technical analysis
-    - configured trading hours
-    - economic-calendar protection
-    - news context
-    - confidence filtering
+    - live OANDA prices and completed candles
+    - hierarchical multi-timeframe technical analysis
+    - configured UK trading hours
+    - official economic-calendar protection
+    - optional headline context
+    - an 80-point demo-testing release threshold
     - estimated demo and live lot sizes
 
     This function cannot place, edit or close trades.
@@ -342,18 +337,12 @@ def build_live_signal() -> dict[str, Any]:
             warnings=context.warnings,
         )
 
-    technical_signal = analysis[
-        "signal"
-    ]
-
-    action = technical_signal[
-        "action"
-    ]
-
+    technical_signal = analysis["signal"]
+    action = str(
+        technical_signal["action"]
+    ).upper()
     confidence = int(
-        technical_signal[
-            "confidence"
-        ]
+        technical_signal["confidence"]
     )
 
     if action not in {
@@ -361,9 +350,7 @@ def build_live_signal() -> dict[str, Any]:
         "SELL",
     }:
         return _wait_result(
-            reason=technical_signal[
-                "reason"
-            ],
+            reason=technical_signal["reason"],
             confidence=confidence,
             analysis=analysis,
             warnings=context.warnings,
@@ -380,20 +367,37 @@ def build_live_signal() -> dict[str, Any]:
             warnings=context.warnings,
         )
 
-    entry_zone = technical_signal[
+    entry_zone = technical_signal.get(
         "entry_zone"
-    ]
-
-    entry = float(
-        entry_zone[
-            "average"
-        ]
+    )
+    take_profits = technical_signal.get(
+        "take_profits"
+    )
+    stop_loss_value = technical_signal.get(
+        "stop_loss"
     )
 
+    if (
+        not isinstance(entry_zone, dict)
+        or not isinstance(take_profits, list)
+        or len(take_profits) < 3
+        or stop_loss_value is None
+    ):
+        return _wait_result(
+            reason=(
+                "The technical setup is missing a complete "
+                "entry, stop-loss or take-profit plan"
+            ),
+            confidence=confidence,
+            analysis=analysis,
+            warnings=context.warnings,
+        )
+
+    entry = float(
+        entry_zone["average"]
+    )
     stop_loss = float(
-        technical_signal[
-            "stop_loss"
-        ]
+        stop_loss_value
     )
 
     demo_sizing = _calculate_lot_size(
@@ -422,7 +426,6 @@ def build_live_signal() -> dict[str, Any]:
         current_timestamp
         + SIGNAL_EXPIRY_MINUTES * 60
     )
-
     expiry = datetime.fromtimestamp(
         expiry_timestamp,
         tz=timezone.utc,
@@ -432,18 +435,17 @@ def build_live_signal() -> dict[str, Any]:
         "status": "ok",
         "action": action,
         "confidence": confidence,
-        "reason": technical_signal[
-            "reason"
-        ],
+        "reason": technical_signal["reason"],
         "reasons": technical_signal.get(
             "reasons",
             [],
         ),
-        "execution_timeframe": (
-            technical_signal[
-                "execution_timeframe"
-            ]
+        "setup_type": technical_signal.get(
+            "setup_type"
         ),
+        "execution_timeframe": technical_signal[
+            "execution_timeframe"
+        ],
         "entry_zone": {
             "low": _round_price(
                 entry_zone["low"]
@@ -451,32 +453,18 @@ def build_live_signal() -> dict[str, Any]:
             "high": _round_price(
                 entry_zone["high"]
             ),
-            "average": _round_price(
-                entry
-            ),
+            "average": _round_price(entry),
         },
-        "entry": _round_price(
-            entry
-        ),
+        "entry": _round_price(entry),
         "stop_loss": _round_price(
             stop_loss
         ),
-        "take_profits": (
-            technical_signal[
-                "take_profits"
-            ]
-        ),
-        "risk_reward": (
-            technical_signal[
-                "risk_reward"
-            ]
-        ),
-        "demo_lot": demo_sizing[
-            "lot"
+        "take_profits": take_profits,
+        "risk_reward": technical_signal[
+            "risk_reward"
         ],
-        "live_lot": live_sizing[
-            "lot"
-        ],
+        "demo_lot": demo_sizing["lot"],
+        "live_lot": live_sizing["lot"],
         "demo_sizing": demo_sizing,
         "live_sizing": live_sizing,
         "expires_at": expiry,
@@ -488,9 +476,7 @@ def build_live_signal() -> dict[str, Any]:
     }
 
     result["telegram_message"] = (
-        _build_telegram_message(
-            result
-        )
+        _build_telegram_message(result)
     )
 
     return result
