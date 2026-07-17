@@ -29,13 +29,17 @@ def _floor_to_lot_step(
     ) * step
 
     step_text = f"{step:.10f}".rstrip("0")
+
     decimal_places = (
         len(step_text.split(".")[1])
         if "." in step_text
         else 0
     )
 
-    return round(stepped, decimal_places)
+    return round(
+        stepped,
+        decimal_places,
+    )
 
 
 def _calculate_lot_size(
@@ -44,7 +48,9 @@ def _calculate_lot_size(
     entry: float,
     stop_loss: float,
 ) -> dict[str, Any]:
-    stop_distance = abs(entry - stop_loss)
+    stop_distance = abs(
+        entry - stop_loss
+    )
 
     if stop_distance <= 0:
         return {
@@ -99,9 +105,10 @@ def _calculate_lot_size(
     if raw_lot < settings.xauusd_min_lot:
         lot = 0.0
         warning = (
-            "Calculated size is below the configured "
-            "minimum lot"
+            "Calculated size is below the "
+            "configured minimum lot"
         )
+
     else:
         capped_lot = min(
             raw_lot,
@@ -116,8 +123,8 @@ def _calculate_lot_size(
         if lot < settings.xauusd_min_lot:
             lot = 0.0
             warning = (
-                "Rounded size is below the configured "
-                "minimum lot"
+                "Rounded size is below the "
+                "configured minimum lot"
             )
 
     estimated_loss_gbp = (
@@ -128,8 +135,14 @@ def _calculate_lot_size(
 
     return {
         "lot": lot,
-        "raw_lot": round(raw_lot, 4),
-        "risk_gbp": round(risk_gbp, 2),
+        "raw_lot": round(
+            raw_lot,
+            4,
+        ),
+        "risk_gbp": round(
+            risk_gbp,
+            2,
+        ),
         "estimated_loss_gbp": round(
             estimated_loss_gbp,
             2,
@@ -163,10 +176,27 @@ def _wait_result(
     }
 
 
+def _calendar_is_unavailable(
+    warnings: list[str],
+) -> bool:
+    calendar_error_phrases = (
+        "Economic calendar unavailable",
+        "FMP_API_KEY not configured",
+    )
+
+    return any(
+        phrase in warning
+        for warning in warnings
+        for phrase in calendar_error_phrases
+    )
+
+
 def _format_lot(
     sizing: dict[str, Any],
 ) -> str:
-    lot = float(sizing["lot"])
+    lot = float(
+        sizing["lot"]
+    )
 
     if lot <= 0:
         return "Below minimum lot"
@@ -198,11 +228,26 @@ def _build_telegram_message(
             "–"
             f"{entry_zone['high']:.3f}"
         ),
-        f"Suggested entry: {result['entry']:.3f}",
-        f"SL: {result['stop_loss']:.3f}",
-        f"TP1: {take_profits[0]['price']:.3f}",
-        f"TP2: {take_profits[1]['price']:.3f}",
-        f"TP3: {take_profits[2]['price']:.3f}",
+        (
+            "Suggested entry: "
+            f"{result['entry']:.3f}"
+        ),
+        (
+            "SL: "
+            f"{result['stop_loss']:.3f}"
+        ),
+        (
+            "TP1: "
+            f"{take_profits[0]['price']:.3f}"
+        ),
+        (
+            "TP2: "
+            f"{take_profits[1]['price']:.3f}"
+        ),
+        (
+            "TP3: "
+            f"{take_profits[2]['price']:.3f}"
+        ),
         "",
         (
             "Demo lot: "
@@ -213,11 +258,23 @@ def _build_telegram_message(
             f"{_format_lot(result['live_sizing'])}"
         ),
         "",
-        f"Confidence: {result['confidence']}%",
-        f"Reason: {result['reason']}",
-        f"Valid for: {SIGNAL_EXPIRY_MINUTES} minutes",
+        (
+            "Confidence: "
+            f"{result['confidence']}%"
+        ),
+        (
+            "Reason: "
+            f"{result['reason']}"
+        ),
+        (
+            "Valid for: "
+            f"{SIGNAL_EXPIRY_MINUTES} minutes"
+        ),
         "",
-        "Lot sizes are estimates until MT5 is connected.",
+        (
+            "Lot sizes are estimates until "
+            "MT5 is connected."
+        ),
     ]
 
     return "\n".join(lines)
@@ -230,17 +287,22 @@ def build_live_signal() -> dict[str, Any]:
     - live OANDA prices and candles
     - multi-timeframe technical analysis
     - configured trading hours
-    - economic-calendar and news protection
+    - economic-calendar protection
+    - news context
     - confidence filtering
     - estimated demo and live lot sizes
 
     This function cannot place, edit or close trades.
     """
 
-    current_timestamp = int(time.time())
+    current_timestamp = int(
+        time.time()
+    )
 
-    allowed, session_reason = trading_window_status(
-        current_timestamp
+    allowed, session_reason = (
+        trading_window_status(
+            current_timestamp
+        )
     )
 
     analysis = analyze_market()
@@ -256,6 +318,19 @@ def build_live_signal() -> dict[str, Any]:
         current_timestamp
     )
 
+    if _calendar_is_unavailable(
+        context.warnings
+    ):
+        return _wait_result(
+            reason=(
+                "Economic calendar unavailable; "
+                "new trades are temporarily blocked"
+            ),
+            confidence=99,
+            analysis=analysis,
+            warnings=context.warnings,
+        )
+
     if context.blocked:
         return _wait_result(
             reason=(
@@ -267,15 +342,28 @@ def build_live_signal() -> dict[str, Any]:
             warnings=context.warnings,
         )
 
-    technical_signal = analysis["signal"]
-    action = technical_signal["action"]
+    technical_signal = analysis[
+        "signal"
+    ]
+
+    action = technical_signal[
+        "action"
+    ]
+
     confidence = int(
-        technical_signal["confidence"]
+        technical_signal[
+            "confidence"
+        ]
     )
 
-    if action not in {"BUY", "SELL"}:
+    if action not in {
+        "BUY",
+        "SELL",
+    }:
         return _wait_result(
-            reason=technical_signal["reason"],
+            reason=technical_signal[
+                "reason"
+            ],
             confidence=confidence,
             analysis=analysis,
             warnings=context.warnings,
@@ -284,30 +372,48 @@ def build_live_signal() -> dict[str, Any]:
     if confidence < MINIMUM_SIGNAL_CONFIDENCE:
         return _wait_result(
             reason=(
-                "Technical setup confidence is below "
-                f"{MINIMUM_SIGNAL_CONFIDENCE}%"
+                "Technical setup confidence is "
+                f"below {MINIMUM_SIGNAL_CONFIDENCE}%"
             ),
             confidence=confidence,
             analysis=analysis,
             warnings=context.warnings,
         )
 
-    entry_zone = technical_signal["entry_zone"]
-    entry = float(entry_zone["average"])
+    entry_zone = technical_signal[
+        "entry_zone"
+    ]
+
+    entry = float(
+        entry_zone[
+            "average"
+        ]
+    )
+
     stop_loss = float(
-        technical_signal["stop_loss"]
+        technical_signal[
+            "stop_loss"
+        ]
     )
 
     demo_sizing = _calculate_lot_size(
-        balance_gbp=settings.demo_balance_gbp,
-        risk_percent=settings.demo_risk_percent,
+        balance_gbp=(
+            settings.demo_balance_gbp
+        ),
+        risk_percent=(
+            settings.demo_risk_percent
+        ),
         entry=entry,
         stop_loss=stop_loss,
     )
 
     live_sizing = _calculate_lot_size(
-        balance_gbp=settings.live_balance_gbp,
-        risk_percent=settings.live_risk_percent,
+        balance_gbp=(
+            settings.live_balance_gbp
+        ),
+        risk_percent=(
+            settings.live_risk_percent
+        ),
         entry=entry,
         stop_loss=stop_loss,
     )
@@ -326,7 +432,9 @@ def build_live_signal() -> dict[str, Any]:
         "status": "ok",
         "action": action,
         "confidence": confidence,
-        "reason": technical_signal["reason"],
+        "reason": technical_signal[
+            "reason"
+        ],
         "reasons": technical_signal.get(
             "reasons",
             [],
@@ -343,10 +451,16 @@ def build_live_signal() -> dict[str, Any]:
             "high": _round_price(
                 entry_zone["high"]
             ),
-            "average": _round_price(entry),
+            "average": _round_price(
+                entry
+            ),
         },
-        "entry": _round_price(entry),
-        "stop_loss": _round_price(stop_loss),
+        "entry": _round_price(
+            entry
+        ),
+        "stop_loss": _round_price(
+            stop_loss
+        ),
         "take_profits": (
             technical_signal[
                 "take_profits"
@@ -357,8 +471,12 @@ def build_live_signal() -> dict[str, Any]:
                 "risk_reward"
             ]
         ),
-        "demo_lot": demo_sizing["lot"],
-        "live_lot": live_sizing["lot"],
+        "demo_lot": demo_sizing[
+            "lot"
+        ],
+        "live_lot": live_sizing[
+            "lot"
+        ],
         "demo_sizing": demo_sizing,
         "live_sizing": live_sizing,
         "expires_at": expiry,
@@ -370,7 +488,9 @@ def build_live_signal() -> dict[str, Any]:
     }
 
     result["telegram_message"] = (
-        _build_telegram_message(result)
+        _build_telegram_message(
+            result
+        )
     )
 
     return result
