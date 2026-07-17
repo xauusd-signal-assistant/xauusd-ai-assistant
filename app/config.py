@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     xauusd_max_lot: float = 0.50
     gbpusd_rate: float = 1.27
     finnhub_api_key: str | None = None
+    fmp_api_key: str | None = None
     newsapi_key: str | None = None
     news_lookback_hours: int = 12
     event_blackout_minutes_before: int = 20
