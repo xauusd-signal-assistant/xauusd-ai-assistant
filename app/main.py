@@ -10,7 +10,11 @@ from .db import alert_exists, init_db, list_signals, save_signal
 from .models import SignalDecision, TradingViewAlert
 from .news import fetch_context
 from .notifications import send_telegram
-from .oanda_client import check_oanda_connection
+from .oanda_client import (
+    check_oanda_connection,
+    get_candles,
+    get_current_price,
+)
 from .position_size import add_lots
 from .risk import rules_decision, wait
 
@@ -23,7 +27,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="XAUUSD AI Assistant",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
@@ -42,6 +46,10 @@ def health():
         ),
         "economic_calendar": bool(settings.fmp_api_key),
         "news": bool(settings.newsapi_key),
+        "oanda_configured": bool(
+            settings.oanda_api_token
+            and settings.oanda_account_id
+        ),
         "signal_window_uk": (
             f"{settings.session_start}-"
             f"{settings.session_end}"
@@ -73,6 +81,52 @@ def health_oanda():
         "instrument": settings.oanda_instrument,
         "read_only": True,
     }
+
+
+@app.get("/health/oanda/market")
+def health_oanda_market():
+    """
+    Manually test the live XAUUSD price and candle feed.
+
+    This endpoint is read-only and cannot place trades.
+    """
+
+    try:
+        price = get_current_price()
+
+        timeframes = {
+            "1m": "M1",
+            "5m": "M5",
+            "15m": "M15",
+            "30m": "M30",
+            "1h": "H1",
+            "4h": "H4",
+        }
+
+        latest_candles = {}
+
+        for label, granularity in timeframes.items():
+            candles = get_candles(
+                granularity=granularity,
+                count=20,
+            )
+            latest_candles[label] = candles[-1]
+
+        return {
+            "status": "ok",
+            "instrument": settings.oanda_instrument,
+            "price": price,
+            "latest_completed_candles": latest_candles,
+            "read_only": True,
+        }
+
+    except Exception as exc:
+        return {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "instrument": settings.oanda_instrument,
+            "read_only": True,
+        }
 
 
 @app.post(
